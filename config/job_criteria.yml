@@ -1,0 +1,18 @@
+platform_targets:
+  - free-work
+  - malt
+  - lehibou
+
+minimum_tjm: 650
+remote_required: true
+excluded_keywords:
+  - wordpress
+  - php
+  - onsite only
+required_keywords:
+  - java
+  - spring
+  - sso
+  - keycloak
+auto_reject_score_below: 45
+alert_score_from: 75

@@ -31,6 +31,9 @@ bootstrap: env install-dev playwright-install ## Prepare a local development env
 playwright-install: ## Install Chromium for Playwright
 	$(BIN)/playwright install chromium
 
+freework-smoke: ## Run the Free-Work Playwright smoke scraper (example: make freework-smoke ARGS="--headful --limit 3")
+	$(BIN)/python -m openclaw.scrapers.freework $(ARGS)
+
 db-up: ## Start local PostgreSQL + pgvector
 	$(COMPOSE) up -d postgres
 
@@ -50,10 +53,9 @@ lint: ## Lint the codebase with Ruff
 	$(BIN)/ruff check .
 
 test: ## Run the unit test suite
-	$(PYTHON) -m unittest discover -s tests
+	$(BIN)/python -m unittest discover -s tests
 
 smoke: ## Compile the package to catch syntax errors
-	$(PYTHON) -m compileall openclaw
+	$(BIN)/python -m compileall openclaw tests
 
 check: smoke test ## Run lightweight verification
-

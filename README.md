@@ -64,10 +64,11 @@ Implemented in this repository now:
 - qualification workflow composition
 - local PostgreSQL + pgvector compose stack
 - API health and qualification preview routes
+- starter Playwright smoke scraper for Free-Work mission extraction
 
 Still to implement:
 
-- Playwright scrapers per platform
+- production-ready Playwright scrapers per platform
 - authenticated session persistence / cookie rotation
 - real Telegram Bot API handlers for callbacks
 - OpenAI retrieval + draft generation
@@ -82,6 +83,8 @@ Still to implement:
 ├── .gitignore
 ├── Makefile
 ├── README.md
+├── config
+│   └── job_criteria.yml
 ├── compose.yml
 ├── pyproject.toml
 ├── openclaw
@@ -111,9 +114,14 @@ These reject missions before they can pollute Telegram:
 - `excluded_keywords`
 - `required_keywords`
 
-Default values in the scaffold:
+Default values in the scaffold now live in `config/job_criteria.yml`:
 
 ```yaml
+platform_targets:
+  - free-work
+  - malt
+  - lehibou
+
 minimum_tjm: 650
 remote_required: true
 excluded_keywords:
@@ -223,6 +231,16 @@ make dev
 
 The first command creates `.env` if missing, installs dependencies, and installs the Playwright browser.
 
+To run the first Free-Work monitoring example after bootstrap:
+
+```bash
+make freework-smoke ARGS="--headful --limit 3"
+```
+
+The smoke command uses Playwright's persistent profile directory at
+`data/playwright/freework`, so accepted cookies and future authenticated sessions can be
+reused across runs.
+
 ### Manual setup
 
 ```bash
@@ -237,6 +255,33 @@ make dev
 
 ```bash
 make check
+```
+
+### Free-Work smoke example
+
+The first monitoring example now lives in:
+
+- `openclaw/scrapers/freework.py`
+
+It performs a minimal but useful first pass:
+
+1. opens a Free-Work listing page
+2. collects the first mission links
+3. visits each mission page
+4. extracts title, client, location, rate, remote mode, keywords, and summary
+5. prints JSON to stdout
+
+Default command:
+
+```bash
+python -m openclaw.scrapers.freework --headful --limit 3
+```
+
+Useful variants:
+
+```bash
+python -m openclaw.scrapers.freework --search-url "https://www.free-work.com/fr/tech-it/jobs/keycloak" --limit 5
+python -m openclaw.scrapers.freework --user-data-dir data/playwright/freework --slow-mo 150 --headful
 ```
 
 ### Qualification preview endpoint
@@ -271,15 +316,38 @@ Important variables:
 - `TELEGRAM_CHAT_ID`: default destination chat for alerts
 - `TELEGRAM_ALLOWED_USER_IDS`: optional allowlist for callback approval actions
 - `OPENAI_API_KEY`: used for proposal drafting and retrieval augmentation
-- `PLATFORM_TARGETS`: comma-separated platform list
-- `MINIMUM_TJM`, `REMOTE_REQUIRED`, `EXCLUDED_KEYWORDS`, `REQUIRED_KEYWORDS`
+- `JOB_CRITERIA_FILE`: path to the YAML file containing platform targets and filtering criteria
 - `RESUME_DIR`, `PROPOSAL_EXAMPLES_DIR`, `PLAYWRIGHT_STORAGE_DIR`
+
+Example `config/job_criteria.yml`:
+
+```yaml
+platform_targets:
+  - free-work
+  - malt
+  - lehibou
+
+minimum_tjm: 650
+remote_required: true
+excluded_keywords:
+  - wordpress
+  - php
+  - onsite only
+required_keywords:
+  - java
+  - spring
+  - sso
+  - keycloak
+auto_reject_score_below: 45
+alert_score_from: 75
+```
 
 Recommended local directories:
 
 - `data/resumes/`
 - `data/proposal_examples/`
 - `data/playwright/`
+- `config/`
 
 Inside `data/playwright`, keep platform-specific session storage such as:
 
@@ -372,4 +440,3 @@ The scaffold includes lightweight unit tests around filtering and resume selecti
 - Telegram callback handling
 - proposal retrieval
 - submission flow
-
