@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
+from typing import Protocol
 
 from openclaw.models.domain import Opportunity, RemoteMode
 
 
-class QualificationRoute(str, Enum):
+class QualificationRoute(StrEnum):
     REJECT = "reject"
     REVIEW = "review"
     ALERT = "alert"
@@ -21,6 +22,26 @@ class FilteringRules:
     auto_reject_score_below: int = 45
     alert_score_from: int = 75
     paris_aliases: tuple[str, ...] = ("paris", "ile-de-france", "idf")
+
+    @classmethod
+    def from_settings(cls, settings: FilteringSettings) -> FilteringRules:
+        return cls(
+            minimum_tjm=settings.minimum_tjm,
+            remote_required=settings.remote_required,
+            excluded_keywords=tuple(settings.excluded_keywords),
+            required_keywords=tuple(settings.required_keywords),
+            auto_reject_score_below=settings.auto_reject_score_below,
+            alert_score_from=settings.alert_score_from,
+        )
+
+
+class FilteringSettings(Protocol):
+    minimum_tjm: int
+    remote_required: bool
+    excluded_keywords: list[str]
+    required_keywords: list[str]
+    auto_reject_score_below: int
+    alert_score_from: int
 
 
 @dataclass(slots=True)
@@ -37,7 +58,9 @@ def score_opportunity(opportunity: Opportunity, rules: FilteringRules) -> Filter
     text = opportunity.search_blob()
     reasons: list[str] = []
     excluded = tuple(keyword for keyword in rules.excluded_keywords if keyword.lower() in text)
-    matched_required = tuple(keyword for keyword in rules.required_keywords if keyword.lower() in text)
+    matched_required = tuple(
+        keyword for keyword in rules.required_keywords if keyword.lower() in text
+    )
 
     if excluded:
         reasons.append(f"Excluded keyword match: {', '.join(excluded)}.")
@@ -97,7 +120,11 @@ def score_opportunity(opportunity: Opportunity, rules: FilteringRules) -> Filter
             matched_signals=signals,
         )
 
-    route = QualificationRoute.ALERT if score >= rules.alert_score_from else QualificationRoute.REVIEW
+    route = (
+        QualificationRoute.ALERT
+        if score >= rules.alert_score_from
+        else QualificationRoute.REVIEW
+    )
     reasons.append(
         "Qualified for Telegram alert."
         if route == QualificationRoute.ALERT
@@ -119,4 +146,3 @@ def _contains_all(text: str, keywords: tuple[str, ...]) -> bool:
 
 def _contains_any(text: str, keywords: tuple[str, ...]) -> bool:
     return any(keyword in text for keyword in keywords)
-

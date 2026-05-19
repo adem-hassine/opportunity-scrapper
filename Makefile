@@ -31,7 +31,7 @@ bootstrap: env install-dev playwright-install ## Prepare a local development env
 playwright-install: ## Install Chromium for Playwright
 	$(BIN)/playwright install chromium
 
-freework-smoke: ## Run the Free-Work Playwright smoke scraper (example: make freework-smoke ARGS="--headful --limit 3")
+freework-smoke: ## Run the Free-Work Playwright smoke scraper (example: make freework-smoke ARGS="--headful --from-date 2026-05-01")
 	$(BIN)/python -m openclaw.scrapers.freework $(ARGS)
 
 db-up: ## Start local PostgreSQL + pgvector

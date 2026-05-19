@@ -7,12 +7,16 @@ import re
 import sys
 import unicodedata
 from dataclasses import dataclass
+from datetime import date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urljoin, urlparse
 
+from openclaw.core.config import get_settings
 from openclaw.models.domain import Opportunity, RemoteMode
 from openclaw.scrapers.base import OpportunityScraper, PlatformSession
+from openclaw.services.filtering import FilteringRules
+from openclaw.workflows.qualification import qualification_packet_to_dict, qualify_opportunity
 
 try:
     from playwright.async_api import TimeoutError as PlaywrightTimeoutError
@@ -131,14 +135,15 @@ class FreeWorkScraper(OpportunityScraper):
         self.slow_mo = slow_mo
         self.timeout_ms = timeout_ms
 
-    async def fetch_new_opportunities(self, limit: int = 5) -> list[Opportunity]:
-        records = await self.fetch_new_opportunity_records(limit=limit)
+    async def fetch_new_opportunities(self) -> list[Opportunity]:
+        records = await self.fetch_new_opportunity_records()
         return [record.opportunity for record in records]
 
-    async def fetch_new_opportunity_records(self, limit: int = 5) -> list[ScrapedOpportunityRecord]:
+    async def fetch_new_opportunity_records(self) -> list[ScrapedOpportunityRecord]:
         if async_playwright is None:
             raise RuntimeError(
-                "Playwright is not installed. Run `make bootstrap` or `make playwright-install` first."
+                "Playwright is not installed. "
+                "Run `make bootstrap` or `make playwright-install` first."
             )
 
         self.user_data_dir.mkdir(parents=True, exist_ok=True)
@@ -158,7 +163,7 @@ class FreeWorkScraper(OpportunityScraper):
 
             try:
                 list_page = context.pages[0] if context.pages else await context.new_page()
-                urls = await self._discover_mission_urls(list_page, limit=limit)
+                urls = await self._discover_mission_urls(list_page)
                 detail_page = await context.new_page()
 
                 records: list[ScrapedOpportunityRecord] = []
@@ -169,7 +174,7 @@ class FreeWorkScraper(OpportunityScraper):
             finally:
                 await context.close()
 
-    async def _discover_mission_urls(self, page: Page, *, limit: int) -> list[str]:
+    async def _discover_mission_urls(self, page: Page) -> list[str]:
         await page.goto(self.search_url, wait_until="domcontentloaded")
         await _dismiss_cookie_banner(page)
 
@@ -200,8 +205,6 @@ class FreeWorkScraper(OpportunityScraper):
 
             seen.add(url)
             urls.append(url)
-            if len(urls) >= limit:
-                break
 
         if not urls:
             raise RuntimeError(
@@ -224,6 +227,7 @@ class FreeWorkScraper(OpportunityScraper):
         location, client = _extract_top_metadata(lines, title)
         remote_mode = _extract_remote_mode(normalized_text)
         remote_days = _extract_remote_days(normalized_text)
+        published_at = _extract_published_at(normalized_text)
 
         if remote_mode == RemoteMode.REMOTE and remote_days is None:
             remote_days = 5
@@ -232,6 +236,7 @@ class FreeWorkScraper(OpportunityScraper):
             platform=self.platform,
             external_id=_extract_external_id(url, normalized_text),
             title=title,
+            published_at=published_at,
             client=client,
             location=location,
             daily_rate_eur=_extract_daily_rate(raw_text),
@@ -318,6 +323,17 @@ def _extract_daily_rate(text: str) -> int | None:
         return int(single_match.group(1))
 
     return None
+
+
+def _extract_published_at(normalized_text: str) -> date | None:
+    match = re.search(r"publiee?\s+le\s+(\d{2}/\d{2}/\d{4})", normalized_text)
+    if match is None:
+        return None
+
+    try:
+        return datetime.strptime(match.group(1), "%d/%m/%Y").date()
+    except ValueError:
+        return None
 
 
 def _extract_remote_mode(normalized_text: str) -> RemoteMode:
@@ -417,7 +433,7 @@ def _rewrite_launch_error(exc: Exception) -> Exception:
         f"  {sys.executable} -m playwright install chromium\n"
         "Or use the repo-managed flow:\n"
         "  make bootstrap\n"
-        '  make freework-smoke ARGS="--headful --limit 5"'
+        '  make freework-smoke ARGS="--headful --from-date 2026-05-01"'
     )
 
 
@@ -428,6 +444,7 @@ def _record_to_dict(record: ScrapedOpportunityRecord) -> dict[str, object]:
         "platform": opportunity.platform,
         "external_id": opportunity.external_id,
         "title": opportunity.title,
+        "published_at": opportunity.published_at.isoformat() if opportunity.published_at else None,
         "client": opportunity.client,
         "location": opportunity.location,
         "daily_rate_eur": opportunity.daily_rate_eur,
@@ -439,15 +456,90 @@ def _record_to_dict(record: ScrapedOpportunityRecord) -> dict[str, object]:
     }
 
 
+def _qualify_records(
+    records: list[ScrapedOpportunityRecord],
+    *,
+    rules: FilteringRules,
+    include_rejected: bool = False,
+) -> list[dict[str, object]]:
+    qualified_records: list[dict[str, object]] = []
+    for record in records:
+        packet = qualify_opportunity(record.opportunity, rules=rules)
+        if packet.filtering_result.rejected and not include_rejected:
+            continue
+
+        payload = _record_to_dict(record)
+        payload.update(qualification_packet_to_dict(packet))
+        qualified_records.append(payload)
+
+    return qualified_records
+
+
+def _keyword_to_search_url(keyword: str) -> str | None:
+    normalized_keyword = _normalize_text(keyword)
+    slug = re.sub(r"[^a-z0-9]+", "-", normalized_keyword).strip("-")
+    if not slug:
+        return None
+    return f"{FREEWORK_BASE_URL}/fr/tech-it/jobs/{slug}"
+
+
+def _build_search_urls(
+    *,
+    required_keywords: list[str],
+    search_url: str | None = None,
+) -> list[str]:
+    if search_url:
+        return [search_url]
+
+    urls: list[str] = []
+    seen: set[str] = set()
+    for keyword in required_keywords:
+        generated_url = _keyword_to_search_url(keyword)
+        if generated_url is None or generated_url in seen:
+            continue
+        seen.add(generated_url)
+        urls.append(generated_url)
+
+    return urls or [DEFAULT_SEARCH_URL]
+
+
+def _filter_records_from_date(
+    records: list[ScrapedOpportunityRecord],
+    *,
+    from_date: date | None,
+) -> list[ScrapedOpportunityRecord]:
+    if from_date is None:
+        return records
+
+    return [
+        record
+        for record in records
+        if (
+            record.opportunity.published_at is not None
+            and record.opportunity.published_at >= from_date
+        )
+    ]
+
+
+def _parse_from_date(value: str) -> date:
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            f"Invalid --from-date value {value!r}. Expected YYYY-MM-DD."
+        ) from exc
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run a small Playwright smoke scraper against Free-Work mission pages.",
     )
-    parser.add_argument("--limit", type=int, default=3, help="Number of mission pages to inspect.")
     parser.add_argument(
         "--search-url",
-        default=DEFAULT_SEARCH_URL,
-        help="Free-Work listing URL to scan for mission links.",
+        help=(
+            "Optional Free-Work listing URL override. "
+            "By default the scraper iterates job_criteria required_keywords."
+        ),
     )
     parser.add_argument(
         "--user-data-dir",
@@ -465,19 +557,53 @@ def _build_parser() -> argparse.ArgumentParser:
         default=0,
         help="Delay in milliseconds between browser actions.",
     )
+    parser.add_argument(
+        "--from-date",
+        type=_parse_from_date,
+        help="Only keep missions published on or after this ISO date (YYYY-MM-DD).",
+    )
+    parser.add_argument(
+        "--include-rejected",
+        action="store_true",
+        help="Include missions rejected by the job criteria in the JSON output.",
+    )
     return parser
 
 
 async def _run_cli() -> int:
     args = _build_parser().parse_args()
-    scraper = FreeWorkScraper(
+    settings = get_settings()
+    if FreeWorkScraper.platform not in settings.platform_targets:
+        print("[]")
+        return 0
+
+    search_urls = _build_search_urls(
+        required_keywords=settings.required_keywords,
         search_url=args.search_url,
-        user_data_dir=args.user_data_dir,
-        headless=not args.headful,
-        slow_mo=args.slow_mo,
     )
-    records = await scraper.fetch_new_opportunity_records(limit=args.limit)
-    print(json.dumps([_record_to_dict(record) for record in records], indent=2, ensure_ascii=False))
+    records: list[ScrapedOpportunityRecord] = []
+    seen_urls: set[str] = set()
+    for search_url in search_urls:
+        scraper = FreeWorkScraper(
+            search_url=search_url,
+            user_data_dir=args.user_data_dir,
+            headless=not args.headful,
+            slow_mo=args.slow_mo,
+        )
+        for record in await scraper.fetch_new_opportunity_records():
+            if record.url in seen_urls:
+                continue
+            seen_urls.add(record.url)
+            records.append(record)
+
+    records = _filter_records_from_date(records, from_date=args.from_date)
+    rules = FilteringRules.from_settings(settings)
+    qualified_records = _qualify_records(
+        records,
+        rules=rules,
+        include_rejected=args.include_rejected,
+    )
+    print(json.dumps(qualified_records, indent=2, ensure_ascii=False))
     return 0
 
 

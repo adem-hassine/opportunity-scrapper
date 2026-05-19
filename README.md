@@ -234,7 +234,7 @@ The first command creates `.env` if missing, installs dependencies, and installs
 To run the first Free-Work monitoring example after bootstrap:
 
 ```bash
-make freework-smoke ARGS="--headful --limit 3"
+make freework-smoke ARGS="--headful --from-date 2026-05-01"
 ```
 
 The smoke command uses Playwright's persistent profile directory at
@@ -266,23 +266,30 @@ The first monitoring example now lives in:
 It performs a minimal but useful first pass:
 
 1. opens a Free-Work listing page
-2. collects the first mission links
+2. collects mission links
 3. visits each mission page
 4. extracts title, client, location, rate, remote mode, keywords, and summary
-5. prints JSON to stdout
+5. applies the active `job_criteria.yml` rules
+6. prints only non-rejected opportunities as JSON by default
 
 Default command:
 
 ```bash
-python -m openclaw.scrapers.freework --headful --limit 3
+python -m openclaw.scrapers.freework --headful --from-date 2026-05-01
 ```
 
 Useful variants:
 
 ```bash
-python -m openclaw.scrapers.freework --search-url "https://www.free-work.com/fr/tech-it/jobs/keycloak" --limit 5
+python -m openclaw.scrapers.freework --from-date 2026-05-01
+python -m openclaw.scrapers.freework --search-url "https://www.free-work.com/fr/tech-it/jobs/keycloak" --from-date 2026-05-01
 python -m openclaw.scrapers.freework --user-data-dir data/playwright/freework --slow-mo 150 --headful
+python -m openclaw.scrapers.freework --include-rejected --from-date 2026-05-01
 ```
+
+When `--search-url` is omitted, the scraper builds one Free-Work listing URL per
+`required_keywords` entry in `config/job_criteria.yml` and deduplicates matching missions across
+those searches.
 
 ### Qualification preview endpoint
 

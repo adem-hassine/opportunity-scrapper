@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from datetime import date
+from enum import StrEnum
 
 
-class RemoteMode(str, Enum):
+class RemoteMode(StrEnum):
     REMOTE = "remote"
     HYBRID = "hybrid"
     ONSITE = "onsite"
@@ -15,6 +16,7 @@ class Opportunity:
     platform: str
     external_id: str
     title: str
+    published_at: date | None = None
     client: str | None = None
     location: str | None = None
     daily_rate_eur: int | None = None
@@ -49,4 +51,3 @@ class ResumeVariant:
     primary_keywords: tuple[str, ...]
     industries: tuple[str, ...] = field(default_factory=tuple)
     preferred_tone: str = "consultative"
-

@@ -51,3 +51,42 @@ def qualify_opportunity(
         ),
     )
 
+
+def qualification_packet_to_dict(packet: QualificationPacket) -> dict[str, object]:
+    resume = None
+    if packet.resume_match is not None:
+        resume = {
+            "key": packet.resume_match.key,
+            "label": packet.resume_match.label,
+            "score": packet.resume_match.score,
+            "matched_keywords": list(packet.resume_match.matched_keywords),
+            "rationale": packet.resume_match.rationale,
+        }
+
+    memory_query = None
+    if packet.memory_query is not None:
+        memory_query = {
+            "client_type": packet.memory_query.client_type,
+            "industry": packet.memory_query.industry,
+            "stack_keywords": list(packet.memory_query.stack_keywords),
+            "resume_key": packet.memory_query.resume_key,
+            "preferred_tone": packet.memory_query.preferred_tone,
+        }
+
+    return {
+        "score": packet.filtering_result.score,
+        "route": packet.filtering_result.route.value,
+        "rejected": packet.filtering_result.rejected,
+        "reasons": packet.filtering_result.reasons,
+        "matched_keywords": list(packet.filtering_result.matched_keywords),
+        "signals": packet.filtering_result.matched_signals,
+        "resume": resume,
+        "memory_query": memory_query,
+        "telegram": {
+            "message": packet.telegram_message,
+            "buttons": [
+                {"label": button.label, "callback_data": button.callback_data}
+                for button in packet.telegram_buttons
+            ],
+        },
+    }
