@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Integer, JSON, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -74,7 +74,7 @@ class ProposalDraftRecord(TimestampMixin, Base):
     __tablename__ = "proposal_drafts"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    opportunity_id: Mapped[int] = mapped_column(Integer, index=True)
+    opportunity_id: Mapped[int] = mapped_column(Integer, ForeignKey("opportunities.id"), index=True)
     resume_key: Mapped[str | None] = mapped_column(String(64))
     tone: Mapped[str] = mapped_column(String(64), default="consultative")
     status: Mapped[str] = mapped_column(String(32), default="drafted")
@@ -97,8 +97,22 @@ class OutcomeRecord(TimestampMixin, Base):
     __tablename__ = "outcomes"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    opportunity_id: Mapped[int] = mapped_column(Integer, index=True)
+    opportunity_id: Mapped[int] = mapped_column(Integer, ForeignKey("opportunities.id"), index=True)
     status: Mapped[str] = mapped_column(String(32), index=True)
     notes: Mapped[str | None] = mapped_column(Text)
     metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class SubmissionRecord(TimestampMixin, Base):
+    __tablename__ = "submissions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    opportunity_id: Mapped[int] = mapped_column(Integer, ForeignKey("opportunities.id"), index=True)
+    proposal_draft_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("proposal_drafts.id"))
+    platform: Mapped[str] = mapped_column(String(64))
+    mission_url: Mapped[str] = mapped_column(String(512))
+    confirmation_url: Mapped[str | None] = mapped_column(String(512))
+    success: Mapped[bool] = mapped_column(Boolean)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 

@@ -24,8 +24,10 @@ venv/
 .vscode/
 .DS_Store
 
-# Runtime artifacts
-data/
+# Playwright browser profiles (session cookies — personal, must not be shared)
+data/playwright/
+
+# Playwright test artifacts
 playwright-report/
 test-results/
-
+.playwright-mcp/

@@ -138,8 +138,9 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://openclaw:openclaw@localhost:5432/openclaw"
 
     openai_api_key: str = ""
-    openai_model: str = "replace-me"
-    openai_embeddings_model: str = "replace-me"
+    openai_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
+    openai_model: str = "gemini-2.0-flash"
+    openai_embeddings_model: str = "text-embedding-004"
 
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""

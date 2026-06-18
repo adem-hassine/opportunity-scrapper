@@ -1,17 +1,23 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 from openclaw.models.domain import Opportunity, RemoteMode
 from openclaw.services.filtering import FilteringResult
 from openclaw.services.resume_selector import ResumeMatch
 
+PREVIEW_SEPARATOR = "──────────────────────"
+PREVIEW_MAX_CHARS = 800
 
-class TelegramAction(str, Enum):
-    APPROVE = "approve"
+
+class TelegramAction(StrEnum):
+    QUICK_APPLY = "quick_apply"
+    REVIEW = "review"
     REJECT = "reject"
-    DRAFT = "draft"
+    SEND = "send"
+    REGENERATE = "regenerate"
+    REJECT_PREVIEW = "reject_preview"
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +62,42 @@ def build_opportunity_alert(
     return "\n".join(lines)
 
 
+def build_preview_message(
+    opportunity: Opportunity,
+    resume_match: ResumeMatch | None,
+    draft_text: str,
+) -> str:
+    """Build the single combined CV + proposal preview message."""
+    client_part = f" — {opportunity.client}" if opportunity.client else ""
+    header = f"📋 {opportunity.title}{client_part}"
+
+    if resume_match:
+        keywords_line = (
+            f"Matched: {', '.join(resume_match.matched_keywords)}"
+            if resume_match.matched_keywords
+            else resume_match.rationale
+        )
+        cv_section = f"📄 CV : {resume_match.label}\n{keywords_line}"
+    else:
+        cv_section = "📄 CV : Java Backend (fallback)"
+
+    total = len(draft_text)
+    if total > PREVIEW_MAX_CHARS:
+        preview = draft_text[:PREVIEW_MAX_CHARS] + f"…\n({total} chars total)"
+    else:
+        preview = draft_text
+
+    return "\n".join([
+        header,
+        "",
+        cv_section,
+        "",
+        PREVIEW_SEPARATOR,
+        preview,
+        PREVIEW_SEPARATOR,
+    ])
+
+
 def default_decision_buttons(
     opportunity_id: str,
     *,
@@ -64,9 +106,36 @@ def default_decision_buttons(
     if rejected:
         return tuple()
     return (
-        TelegramButton("Approve", encode_callback(opportunity_id, TelegramAction.APPROVE)),
-        TelegramButton("Reject", encode_callback(opportunity_id, TelegramAction.REJECT)),
-        TelegramButton("Draft Proposal", encode_callback(opportunity_id, TelegramAction.DRAFT)),
+        TelegramButton(
+            "⚡ Quick Apply",
+            encode_callback(opportunity_id, TelegramAction.QUICK_APPLY),
+        ),
+        TelegramButton(
+            "📝 Review & Apply",
+            encode_callback(opportunity_id, TelegramAction.REVIEW),
+        ),
+        TelegramButton(
+            "✗ Reject",
+            encode_callback(opportunity_id, TelegramAction.REJECT),
+        ),
+    )
+
+
+def preview_action_buttons(opportunity_id: str) -> tuple[TelegramButton, ...]:
+    """Buttons shown below the combined CV + proposal preview."""
+    return (
+        TelegramButton(
+            "✅ Envoyer",
+            encode_callback(opportunity_id, TelegramAction.SEND),
+        ),
+        TelegramButton(
+            "🔄 Regénérer",
+            encode_callback(opportunity_id, TelegramAction.REGENERATE),
+        ),
+        TelegramButton(
+            "✗ Rejeter",
+            encode_callback(opportunity_id, TelegramAction.REJECT_PREVIEW),
+        ),
     )
 
 
@@ -86,4 +155,3 @@ def _remote_label(opportunity: Opportunity) -> str:
     if opportunity.remote_days_per_week is not None:
         return f"Hybrid ({opportunity.remote_days_per_week} remote day(s) per week)"
     return "Hybrid"
-

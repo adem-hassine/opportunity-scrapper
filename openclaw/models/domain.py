@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from enum import StrEnum
 
 
@@ -25,6 +25,7 @@ class Opportunity:
     summary: str = ""
     keywords: tuple[str, ...] = field(default_factory=tuple)
     industry: str | None = None
+    source_url: str | None = None
 
     def search_blob(self) -> str:
         parts = [
@@ -51,3 +52,14 @@ class ResumeVariant:
     primary_keywords: tuple[str, ...]
     industries: tuple[str, ...] = field(default_factory=tuple)
     preferred_tone: str = "consultative"
+    file_path: str | None = None
+
+
+@dataclass(slots=True)
+class SubmissionResult:
+    success: bool
+    platform: str
+    mission_url: str
+    confirmation_url: str | None = None
+    error: str | None = None
+    submitted_at: datetime | None = None

@@ -22,6 +22,7 @@ DEFAULT_RESUME_VARIANTS: tuple[ResumeVariant, ...] = (
         primary_keywords=("java", "spring", "spring boot", "rest", "microservices"),
         industries=("banking", "finance", "retail"),
         preferred_tone="consultative",
+        file_path="data/resumes/java-backend.pdf",
     ),
     ResumeVariant(
         key="iam-sso",
@@ -30,6 +31,7 @@ DEFAULT_RESUME_VARIANTS: tuple[ResumeVariant, ...] = (
         primary_keywords=("keycloak", "oauth2", "sso", "saml", "auth0", "okta"),
         industries=("banking", "insurance", "security"),
         preferred_tone="enterprise",
+        file_path="data/resumes/iam-sso.pdf",
     ),
     ResumeVariant(
         key="enterprise-architect",
@@ -38,6 +40,7 @@ DEFAULT_RESUME_VARIANTS: tuple[ResumeVariant, ...] = (
         primary_keywords=("architecture", "governance", "transformation", "integration"),
         industries=("banking", "public", "enterprise"),
         preferred_tone="enterprise",
+        file_path="data/resumes/enterprise-architect.pdf",
     ),
     ResumeVariant(
         key="api-security",
@@ -46,6 +49,7 @@ DEFAULT_RESUME_VARIANTS: tuple[ResumeVariant, ...] = (
         primary_keywords=("security", "api", "gateway", "oauth2", "zero trust"),
         industries=("banking", "security", "healthcare"),
         preferred_tone="enterprise",
+        file_path="data/resumes/api-security.pdf",
     ),
     ResumeVariant(
         key="cloud-migration",
@@ -54,6 +58,7 @@ DEFAULT_RESUME_VARIANTS: tuple[ResumeVariant, ...] = (
         primary_keywords=("aws", "azure", "gcp", "kubernetes", "migration", "modernization"),
         industries=("banking", "saas", "enterprise"),
         preferred_tone="consultative",
+        file_path="data/resumes/cloud-migration.pdf",
     ),
 )
 

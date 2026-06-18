@@ -15,4 +15,4 @@ required_keywords:
   - sso
   - keycloak
 auto_reject_score_below: 45
-alert_score_from: 75
+alert_score_from: 60
