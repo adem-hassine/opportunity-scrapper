@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 from openclaw.core.config import get_settings
 from openclaw.db.repository import get_opportunity_by_external_id, upsert_opportunity
@@ -34,7 +34,7 @@ else:
 
 FREEWORK_BASE_URL = "https://www.free-work.com"
 DEFAULT_SEARCH_URL = "https://www.free-work.com/fr/tech-it/jobs/java"
-MISSION_LINK_SELECTOR = "a[href*='/job-mission/']"
+MISSION_LINK_SELECTOR = "h2 a[href*='/job-mission/']"
 
 COOKIE_ACCEPT_SELECTORS = (
     "#didomi-notice-agree-button",
@@ -179,7 +179,28 @@ class FreeWorkScraper(OpportunityScraper):
     async def _discover_mission_urls(self, page: Page) -> list[str]:
         await page.goto(self.search_url, wait_until="domcontentloaded")
         await _dismiss_cookie_banner(page)
+        await self._wait_for_mission_links(page)
 
+        urls: list[str] = []
+        seen: set[str] = set()
+        await self._collect_mission_urls(page, urls=urls, seen=seen)
+
+        page_count = await _extract_last_pagination_page(page)
+        page_url = page.url
+        for page_number in range(2, page_count + 1):
+            await page.goto(_url_with_page(page_url, page_number), wait_until="domcontentloaded")
+            await self._wait_for_mission_links(page)
+            await self._collect_mission_urls(page, urls=urls, seen=seen)
+
+        if not urls:
+            raise RuntimeError(
+                "Free-Work mission links were not extracted from the listing page. "
+                "The listing markup likely changed."
+            )
+
+        return urls
+
+    async def _wait_for_mission_links(self, page: Page) -> None:
         try:
             await page.locator(MISSION_LINK_SELECTOR).first.wait_for(
                 state="attached",
@@ -191,10 +212,15 @@ class FreeWorkScraper(OpportunityScraper):
                 "Run with --headful to inspect the page or update the selectors."
             ) from exc
 
+    async def _collect_mission_urls(
+        self,
+        page: Page,
+        *,
+        urls: list[str],
+        seen: set[str],
+    ) -> None:
         link_locator = page.locator(MISSION_LINK_SELECTOR)
         link_count = await link_locator.count()
-        urls: list[str] = []
-        seen: set[str] = set()
 
         for index in range(link_count):
             href = await link_locator.nth(index).get_attribute("href")
@@ -207,14 +233,6 @@ class FreeWorkScraper(OpportunityScraper):
 
             seen.add(url)
             urls.append(url)
-
-        if not urls:
-            raise RuntimeError(
-                "Free-Work mission links were not extracted from the listing page. "
-                "The listing markup likely changed."
-            )
-
-        return urls
 
     async def _scrape_mission_detail(self, page: Page, url: str) -> Opportunity:
         await page.goto(url, wait_until="domcontentloaded")
@@ -261,6 +279,31 @@ async def _dismiss_cookie_banner(page: Page) -> None:
 
         await button.click()
         return
+
+
+async def _extract_last_pagination_page(page: Page) -> int:
+    page_buttons = page.locator("button[data-page]")
+    button_count = await page_buttons.count()
+    page_numbers: list[int] = []
+
+    for index in range(button_count):
+        value = await page_buttons.nth(index).get_attribute("data-page")
+        if value is None or not value.isdigit():
+            continue
+        page_numbers.append(int(value))
+
+    return max(page_numbers, default=1)
+
+
+def _url_with_page(url: str, page_number: int) -> str:
+    parsed = urlparse(url)
+    query_items = [
+        (key, value)
+        for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+        if key != "page"
+    ]
+    query_items.append(("page", str(page_number)))
+    return urlunparse(parsed._replace(query=urlencode(query_items)))
 
 
 async def _safe_text(locator) -> str | None:
