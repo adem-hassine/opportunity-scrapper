@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
+from urllib.parse import parse_qsl, quote, urlencode, urljoin, urlparse, urlunparse
 
 from openclaw.core.config import get_settings
 from openclaw.db.repository import get_opportunity_by_external_id, upsert_opportunity
@@ -33,7 +33,10 @@ else:
     Page = Any
 
 FREEWORK_BASE_URL = "https://www.free-work.com"
-DEFAULT_SEARCH_URL = "https://www.free-work.com/fr/tech-it/jobs/java"
+FREEWORK_SEARCH_LOCATION = "fr~~~"
+DEFAULT_SEARCH_URL = (
+    f"{FREEWORK_BASE_URL}/fr/tech-it/jobs?locations={FREEWORK_SEARCH_LOCATION}&query=java"
+)
 MISSION_LINK_SELECTOR = "h2 a[href*='/job-mission/']"
 
 COOKIE_ACCEPT_SELECTORS = (
@@ -130,12 +133,27 @@ class FreeWorkScraper(OpportunityScraper):
         headless: bool = True,
         slow_mo: int = 0,
         timeout_ms: int = 30_000,
+        employment_types: list[str] | tuple[str, ...] = ("freelance",),
+        minimum_tjm: int = 650,
+        unspecified_tjm: bool = True,
+        minimum_duration_months: int = 0,
+        minimum_year_salary: int = 90_000,
+        allowed_remote_modes: list[RemoteMode] | tuple[RemoteMode, ...] = (
+            RemoteMode.REMOTE,
+            RemoteMode.HYBRID,
+        ),
     ) -> None:
         self.search_url = search_url
         self.user_data_dir = Path(user_data_dir)
         self.headless = headless
         self.slow_mo = slow_mo
         self.timeout_ms = timeout_ms
+        self.employment_types = _normalize_employment_types(employment_types)
+        self.minimum_tjm = minimum_tjm
+        self.unspecified_tjm = unspecified_tjm
+        self.minimum_duration_months = minimum_duration_months
+        self.minimum_year_salary = minimum_year_salary
+        self.allowed_remote_modes = _normalize_allowed_remote_modes(allowed_remote_modes)
 
     async def fetch_new_opportunities(self) -> list[Opportunity]:
         records = await self.fetch_new_opportunity_records()
@@ -164,13 +182,18 @@ class FreeWorkScraper(OpportunityScraper):
             context.set_default_timeout(self.timeout_ms)
 
             try:
-                list_page = context.pages[0] if context.pages else await context.new_page()
+                list_page = await context.new_page()
                 urls = await self._discover_mission_urls(list_page)
+                if not urls:
+                    return []
+
                 detail_page = await context.new_page()
 
                 records: list[ScrapedOpportunityRecord] = []
                 for url in urls:
                     opportunity = await self._scrape_mission_detail(detail_page, url)
+                    if opportunity.remote_mode not in self.allowed_remote_modes:
+                        continue
                     records.append(ScrapedOpportunityRecord(url=url, opportunity=opportunity))
                 return records
             finally:
@@ -178,8 +201,17 @@ class FreeWorkScraper(OpportunityScraper):
 
     async def _discover_mission_urls(self, page: Page) -> list[str]:
         await page.goto(self.search_url, wait_until="domcontentloaded")
+        if _is_blank_page_url(page.url):
+            return []
+
         await _dismiss_cookie_banner(page)
-        await self._wait_for_mission_links(page)
+        if not await self._wait_for_mission_links(page):
+            if await _page_indicates_no_results(page):
+                return []
+            raise RuntimeError(
+                "Free-Work mission links were not found. "
+                "Run with --headful to inspect the page or update the selectors."
+            )
 
         urls: list[str] = []
         seen: set[str] = set()
@@ -189,10 +221,13 @@ class FreeWorkScraper(OpportunityScraper):
         page_url = page.url
         for page_number in range(2, page_count + 1):
             await page.goto(_url_with_page(page_url, page_number), wait_until="domcontentloaded")
-            await self._wait_for_mission_links(page)
+            if not await self._wait_for_mission_links(page):
+                continue
             await self._collect_mission_urls(page, urls=urls, seen=seen)
 
         if not urls:
+            if await _page_indicates_no_results(page):
+                return []
             raise RuntimeError(
                 "Free-Work mission links were not extracted from the listing page. "
                 "The listing markup likely changed."
@@ -200,17 +235,15 @@ class FreeWorkScraper(OpportunityScraper):
 
         return urls
 
-    async def _wait_for_mission_links(self, page: Page) -> None:
+    async def _wait_for_mission_links(self, page: Page) -> bool:
         try:
             await page.locator(MISSION_LINK_SELECTOR).first.wait_for(
                 state="attached",
                 timeout=10_000,
             )
-        except PlaywrightTimeoutError as exc:
-            raise RuntimeError(
-                "Free-Work mission links were not found. "
-                "Run with --headful to inspect the page or update the selectors."
-            ) from exc
+            return True
+        except PlaywrightTimeoutError:
+            return False
 
     async def _collect_mission_urls(
         self,
@@ -223,7 +256,20 @@ class FreeWorkScraper(OpportunityScraper):
         link_count = await link_locator.count()
 
         for index in range(link_count):
-            href = await link_locator.nth(index).get_attribute("href")
+            link = link_locator.nth(index)
+            card = await _card_for_mission_link(link)
+            if not await _card_matches_listing_criteria(
+                card,
+                employment_types=self.employment_types,
+                minimum_tjm=self.minimum_tjm,
+                unspecified_tjm=self.unspecified_tjm,
+                minimum_duration_months=self.minimum_duration_months,
+                minimum_year_salary=self.minimum_year_salary,
+                allowed_remote_modes=self.allowed_remote_modes,
+            ):
+                continue
+
+            href = await link.get_attribute("href")
             if not href:
                 continue
 
@@ -260,6 +306,8 @@ class FreeWorkScraper(OpportunityScraper):
             client=client,
             location=location,
             daily_rate_eur=_extract_daily_rate(raw_text),
+            duration_months=_extract_duration_months(raw_text),
+            required_experience_years=_extract_required_experience_years(raw_text),
             remote_mode=remote_mode,
             remote_days_per_week=remote_days,
             summary=_extract_summary(lines, title),
@@ -279,6 +327,212 @@ async def _dismiss_cookie_banner(page: Page) -> None:
 
         await button.click()
         return
+
+
+def _is_blank_page_url(url: str) -> bool:
+    return url == "about:blank"
+
+
+async def _page_indicates_no_results(page: Page) -> bool:
+    if _is_blank_page_url(page.url):
+        return True
+
+    try:
+        body_text = await page.locator("body").inner_text(timeout=1_000)
+    except Exception:
+        return False
+
+    return _listing_body_indicates_no_results(body_text)
+
+
+def _listing_body_indicates_no_results(text: str) -> bool:
+    normalized = _normalize_text(text)
+    if not normalized:
+        return False
+
+    no_result_markers = (
+        "aucune offre",
+        "aucun resultat",
+        "aucune mission",
+        "0 offre",
+        "0 mission",
+        "no result",
+        "no jobs",
+    )
+    return any(marker in normalized for marker in no_result_markers)
+
+
+async def _card_for_mission_link(link):
+    full_card = link.locator(
+        "xpath=ancestor::div[contains(@class, 'mb-4') and contains(@class, 'relative')][1]"
+    )
+    if await full_card.count():
+        return full_card.first
+
+    inner_card = link.locator("xpath=ancestor::div[contains(@class, 'p-4')][1]")
+    if await inner_card.count():
+        return inner_card.first
+
+    return link
+
+
+async def _card_matches_listing_criteria(
+    card,
+    *,
+    employment_types: tuple[str, ...],
+    minimum_tjm: int,
+    unspecified_tjm: bool,
+    minimum_duration_months: int,
+    minimum_year_salary: int,
+    allowed_remote_modes: tuple[RemoteMode, ...],
+) -> bool:
+    return _card_text_matches_listing_criteria(
+        await card.inner_text(),
+        employment_types=employment_types,
+        minimum_tjm=minimum_tjm,
+        unspecified_tjm=unspecified_tjm,
+        minimum_duration_months=minimum_duration_months,
+        minimum_year_salary=minimum_year_salary,
+        allowed_remote_modes=allowed_remote_modes,
+    )
+
+
+def _card_text_matches_listing_criteria(
+    text: str,
+    *,
+    employment_types: tuple[str, ...],
+    minimum_tjm: int,
+    unspecified_tjm: bool,
+    minimum_duration_months: int,
+    minimum_year_salary: int,
+    allowed_remote_modes: tuple[RemoteMode, ...] = (RemoteMode.REMOTE, RemoteMode.HYBRID),
+) -> bool:
+    allowed_employment_types = set(employment_types)
+    card_employment_types = _extract_card_employment_types(text)
+    if not card_employment_types.intersection(allowed_employment_types):
+        return False
+
+    card_remote_mode = _extract_remote_mode(_normalize_text(text))
+    if card_remote_mode not in allowed_remote_modes:
+        return False
+
+    if "freelance" in allowed_employment_types and "freelance" in card_employment_types:
+        duration_months = _extract_card_duration_months(text)
+        if minimum_duration_months > 0 and (
+            duration_months is None or duration_months < minimum_duration_months
+        ):
+            return False
+
+        daily_rate = _extract_card_daily_rate(text)
+        if daily_rate is None:
+            return unspecified_tjm
+        if daily_rate is not None and daily_rate >= minimum_tjm:
+            return True
+
+    salaried_types = {"cdi", "cdd"}
+    if allowed_employment_types.intersection(salaried_types) and card_employment_types.intersection(
+        salaried_types
+    ):
+        annual_salary = _extract_card_annual_salary(text)
+        if annual_salary is not None and annual_salary >= minimum_year_salary:
+            return True
+
+    return False
+
+
+def _normalize_employment_types(values: list[str] | tuple[str, ...]) -> tuple[str, ...]:
+    normalized: list[str] = []
+    for value in values:
+        item = _normalize_text(value).replace("-", " ").strip()
+        if item in {"freelance", "contractor", "mission"}:
+            normalized.append("freelance")
+        elif item in {"cdi", "permanent"}:
+            normalized.append("cdi")
+        elif item in {"cdd", "fixed term", "fixed term contract"}:
+            normalized.append("cdd")
+    return tuple(dict.fromkeys(normalized)) or ("freelance",)
+
+
+def _normalize_allowed_remote_modes(
+    values: list[RemoteMode] | tuple[RemoteMode, ...],
+) -> tuple[RemoteMode, ...]:
+    return tuple(dict.fromkeys(values)) or (RemoteMode.REMOTE, RemoteMode.HYBRID)
+
+
+def _extract_card_employment_types(text: str) -> set[str]:
+    normalized = _normalize_text(text)
+    found: set[str] = set()
+    if re.search(r"\bfreelance\b", normalized):
+        found.add("freelance")
+    if re.search(r"\bcdi\b", normalized):
+        found.add("cdi")
+    if re.search(r"\bcdd\b", normalized):
+        found.add("cdd")
+    return found
+
+
+def _extract_card_daily_rate(text: str) -> int | None:
+    normalized = _normalize_card_pay_text(text)
+    match = re.search(
+        r"\b(\d{2,4})(?:\s*[-–]\s*(\d{2,4}))?\s*(?:€|eur|euro)\s*(?:/|par)?\s*j",
+        normalized,
+    )
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def _extract_card_annual_salary(text: str) -> int | None:
+    normalized = _normalize_card_pay_text(text)
+    match = re.search(
+        r"\b(\d{2,3})\s*k(?:\s*[-–]\s*(\d{2,3})\s*k?)?\s*(?:€|eur|euro)?\s*(?:/|par)?\s*an",
+        normalized,
+    )
+    if not match:
+        return None
+    return int(match.group(1)) * 1000
+
+
+def _extract_card_duration_months(text: str) -> int | None:
+    normalized = _normalize_card_pay_text(text)
+    month_match = re.search(r"\b(\d{1,2})\s*mois\b", normalized)
+    if month_match:
+        return int(month_match.group(1))
+
+    year_match = re.search(r"\b(\d{1,2})\s*ans?\b", normalized)
+    if year_match:
+        return int(year_match.group(1)) * 12
+
+    return None
+
+
+def _extract_duration_months(text: str) -> int | None:
+    return _extract_card_duration_months(text)
+
+
+def _extract_required_experience_years(text: str) -> int | None:
+    normalized = _normalize_text(_normalize_card_pay_text(text))
+    match = re.search(
+        r"(?:>|>=|plus de|minimum|min\.?|au moins)?\s*(\d{1,2})\s*ans?.{0,8}experience",
+        normalized,
+    )
+    if match:
+        return int(match.group(1))
+
+    match = re.search(
+        r"experience\s*:?\s*(?:>|>=|plus de|minimum|min\.?|au moins)?\s*(\d{1,2})\s*ans?",
+        normalized,
+    )
+    if match:
+        return int(match.group(1))
+
+    return None
+
+
+def _normalize_card_pay_text(text: str) -> str:
+    normalized = unicodedata.normalize("NFKC", text)
+    normalized = normalized.replace("\xa0", " ").replace("⁄", "/").replace("’", "'")
+    return re.sub(r"\s+", " ", normalized).lower().strip()
 
 
 async def _extract_last_pagination_page(page: Page) -> int:
@@ -494,6 +748,8 @@ def _record_to_dict(record: ScrapedOpportunityRecord) -> dict[str, object]:
         "client": opportunity.client,
         "location": opportunity.location,
         "daily_rate_eur": opportunity.daily_rate_eur,
+        "duration_months": opportunity.duration_months,
+        "required_experience_years": opportunity.required_experience_years,
         "remote_mode": opportunity.remote_mode.value,
         "remote_days_per_week": opportunity.remote_days_per_week,
         "summary": opportunity.summary,
@@ -522,11 +778,32 @@ def _qualify_records(
 
 
 def _keyword_to_search_url(keyword: str) -> str | None:
-    normalized_keyword = _normalize_text(keyword)
-    slug = re.sub(r"[^a-z0-9]+", "-", normalized_keyword).strip("-")
-    if not slug:
+    normalized_terms = _normalize_search_terms([keyword])
+    if not normalized_terms:
         return None
-    return f"{FREEWORK_BASE_URL}/fr/tech-it/jobs/{slug}"
+    return _search_terms_to_url(normalized_terms)
+
+
+def _normalize_search_terms(keywords: list[str]) -> list[str]:
+    terms: list[str] = []
+    seen: set[str] = set()
+    for keyword in keywords:
+        for raw_term in keyword.split(","):
+            normalized_term = _normalize_text(raw_term)
+            normalized_term = re.sub(r"\s+", " ", normalized_term).strip()
+            if not normalized_term or normalized_term in seen:
+                continue
+            seen.add(normalized_term)
+            terms.append(normalized_term)
+    return terms
+
+
+def _search_terms_to_url(terms: list[str]) -> str:
+    query_items = [
+        ("locations", FREEWORK_SEARCH_LOCATION),
+        ("query", " ".join(terms)),
+    ]
+    return f"{FREEWORK_BASE_URL}/fr/tech-it/jobs?{urlencode(query_items, quote_via=quote)}"
 
 
 def _build_search_urls(
@@ -540,13 +817,18 @@ def _build_search_urls(
     urls: list[str] = []
     seen: set[str] = set()
     for keyword in required_keywords:
-        generated_url = _keyword_to_search_url(keyword)
-        if generated_url is None or generated_url in seen:
+        terms = _normalize_search_terms([keyword])
+        if not terms:
+            continue
+        generated_url = _search_terms_to_url(terms)
+        if generated_url in seen:
             continue
         seen.add(generated_url)
         urls.append(generated_url)
 
-    return urls or [DEFAULT_SEARCH_URL]
+    if not urls:
+        return [DEFAULT_SEARCH_URL]
+    return urls
 
 
 def _filter_records_from_date(
