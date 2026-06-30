@@ -16,6 +16,8 @@ class QualificationPreviewRequest(BaseModel):
     client: str | None = None
     location: str | None = None
     daily_rate_eur: int | None = None
+    duration_months: int | None = None
+    required_experience_years: int | None = None
     remote_mode: RemoteMode = RemoteMode.HYBRID
     remote_days_per_week: int | None = None
     summary: str = ""
@@ -33,6 +35,8 @@ async def qualification_preview(payload: QualificationPreviewRequest) -> dict[st
         client=payload.client,
         location=payload.location,
         daily_rate_eur=payload.daily_rate_eur,
+        duration_months=payload.duration_months,
+        required_experience_years=payload.required_experience_years,
         remote_mode=payload.remote_mode,
         remote_days_per_week=payload.remote_days_per_week,
         summary=payload.summary,

@@ -458,6 +458,8 @@ def _record_to_dict(record: ScrapedOpportunityRecord) -> dict[str, object]:
         "client": opportunity.client,
         "location": opportunity.location,
         "daily_rate_eur": opportunity.daily_rate_eur,
+        "duration_months": opportunity.duration_months,
+        "required_experience_years": opportunity.required_experience_years,
         "remote_mode": opportunity.remote_mode.value,
         "remote_days_per_week": opportunity.remote_days_per_week,
         "summary": opportunity.summary,

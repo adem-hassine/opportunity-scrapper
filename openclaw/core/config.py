@@ -1,17 +1,36 @@
+from __future__ import annotations
+
+from datetime import date, datetime
 from functools import cached_property, lru_cache
 from pathlib import Path
 from typing import Annotated, Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+from openclaw.models.domain import RemoteMode
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+class FreelanceCriteria(BaseModel):
+    minimum_tjm: int
+    unspecified_tjm: bool
+    minimum_duration_months: int
+
+
+class CddCdiCriteria(BaseModel):
+    minimum_year_salary: int
+
+
 class JobCriteria(BaseModel):
     platform_targets: list[str] = Field(default_factory=lambda: ["free-work", "malt", "lehibou"])
-    minimum_tjm: int = 650
-    remote_required: bool = True
+    employment_type: list[str] = Field(default_factory=lambda: ["freelance"])
+    freelance_criteria: FreelanceCriteria | None = None
+    cdd_cdi_criteria: CddCdiCriteria | None = None
+    allowed_remote_modes: list[RemoteMode] = Field(
+        default_factory=lambda: [RemoteMode.REMOTE, RemoteMode.HYBRID]
+    )
     excluded_keywords: list[str] = Field(
         default_factory=lambda: ["wordpress", "php", "onsite only"]
     )
@@ -20,20 +39,78 @@ class JobCriteria(BaseModel):
     )
     auto_reject_score_below: int = 45
     alert_score_from: int = 75
+    publication_date: str | None = None
 
     @field_validator(
         "platform_targets",
+        "employment_type",
         "excluded_keywords",
         "required_keywords",
         mode="before",
     )
     @classmethod
     def split_csv(cls, value: Any) -> Any:
-        if value is None or isinstance(value, list):
+        if value is None:
             return value
+        if isinstance(value, list):
+            items: list[Any] = []
+            for item in value:
+                if isinstance(item, str):
+                    items.extend(part.strip() for part in item.split(",") if part.strip())
+                else:
+                    items.append(item)
+            return items
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
+
+    @field_validator("allowed_remote_modes", mode="before")
+    @classmethod
+    def normalize_remote_modes(cls, value: Any) -> Any:
+        if value is None:
+            return value
+        raw_values = value if isinstance(value, list) else [value]
+        values: list[Any] = []
+        for item in raw_values:
+            if isinstance(item, str):
+                values.extend(part.strip() for part in item.split(",") if part.strip())
+            else:
+                values.append(item)
+        return [_normalize_remote_mode(item) for item in values]
+
+    @model_validator(mode="after")
+    def validate_employment_criteria(self) -> JobCriteria:
+        employment_types = {_normalize_employment_type(value) for value in self.employment_type}
+        employment_types.discard(None)
+
+        if "freelance" in employment_types and self.freelance_criteria is None:
+            raise ValueError("freelance_criteria is required when employment_type includes freelance.")
+        if employment_types.intersection({"cdi", "cdd"}) and self.cdd_cdi_criteria is None:
+            raise ValueError("cdd_cdi_criteria is required when employment_type includes cdi or cdd.")
+
+        return self
+
+
+def _normalize_employment_type(value: str) -> str | None:
+    item = value.strip().lower().replace("-", " ")
+    if item in {"freelance", "contractor", "mission"}:
+        return "freelance"
+    if item in {"cdi", "permanent"}:
+        return "cdi"
+    if item in {"cdd", "fixed term", "fixed term contract"}:
+        return "cdd"
+    return item or None
+
+
+def _normalize_remote_mode(value: Any) -> str:
+    item = str(value).strip().lower().replace("_", " ").replace("-", " ")
+    if item in {"remote", "full remote", "fully remote", "100% remote"}:
+        return RemoteMode.REMOTE.value
+    if item in {"hybrid", "hybride", "partial remote", "teletravail partiel"}:
+        return RemoteMode.HYBRID.value
+    if item in {"onsite", "on site", "sur site", "presentiel", "présentiel"}:
+        return RemoteMode.ONSITE.value
+    return item
 
 
 def resolve_repo_path(path: str | Path) -> Path:
@@ -180,11 +257,35 @@ class Settings(BaseSettings):
 
     @property
     def minimum_tjm(self) -> int:
-        return self.job_criteria.minimum_tjm
+        if self.job_criteria.freelance_criteria is None:
+            return 0
+        return self.job_criteria.freelance_criteria.minimum_tjm
 
     @property
-    def remote_required(self) -> bool:
-        return self.job_criteria.remote_required
+    def unspecified_tjm(self) -> bool:
+        if self.job_criteria.freelance_criteria is None:
+            return False
+        return self.job_criteria.freelance_criteria.unspecified_tjm
+
+    @property
+    def minimum_duration_months(self) -> int:
+        if self.job_criteria.freelance_criteria is None:
+            return 0
+        return self.job_criteria.freelance_criteria.minimum_duration_months
+
+    @property
+    def minimum_year_salary(self) -> int:
+        if self.job_criteria.cdd_cdi_criteria is None:
+            return 0
+        return self.job_criteria.cdd_cdi_criteria.minimum_year_salary
+
+    @property
+    def employment_type(self) -> list[str]:
+        return list(self.job_criteria.employment_type)
+
+    @property
+    def allowed_remote_modes(self) -> list[RemoteMode]:
+        return list(self.job_criteria.allowed_remote_modes)
 
     @property
     def excluded_keywords(self) -> list[str]:
@@ -201,6 +302,16 @@ class Settings(BaseSettings):
     @property
     def alert_score_from(self) -> int:
         return self.job_criteria.alert_score_from
+
+    @property
+    def publication_date(self) -> date | None:
+        raw = self.job_criteria.publication_date
+        if raw is None:
+            return None
+        try:
+            return datetime.strptime(raw, "%d/%m/%Y").date()
+        except ValueError:
+            return None
 
     def public_summary(self) -> dict[str, object]:
         return {

@@ -35,13 +35,21 @@ def build_opportunity_alert(
         "NEW OPPORTUNITY",
         "",
         f"Platform: {opportunity.platform}",
-        f"TJM: {_rate_label(opportunity.daily_rate_eur)}",
-        f"Remote: {_remote_label(opportunity)}",
-        f"Client: {opportunity.client or 'Unknown'}",
-        f"Industry: {opportunity.industry or 'Unknown'}",
-        "",
-        "Stack:",
     ]
+    if opportunity.source_url:
+        lines.append(f"Link: {opportunity.source_url}")
+    lines.extend(
+        [
+            f"TJM: {_rate_label(opportunity.daily_rate_eur, opportunity.daily_rate_range)}",
+            f"Duration: {_duration_label(opportunity.duration_months)}",
+            f"Required experience: {_experience_label(opportunity.required_experience_years)}",
+            f"Remote: {_remote_label(opportunity)}",
+            f"Client: {opportunity.client or 'Unknown'}",
+            f"Industry: {opportunity.industry or 'Unknown'}",
+            "",
+            "Stack:",
+        ]
+    )
     if opportunity.keywords:
         lines.extend(f"- {keyword}" for keyword in opportunity.keywords)
     else:
@@ -143,8 +151,25 @@ def encode_callback(opportunity_id: str, action: TelegramAction) -> str:
     return f"{action.value}:{opportunity_id}"
 
 
-def _rate_label(daily_rate_eur: int | None) -> str:
+def _rate_label(daily_rate_eur: int | None, daily_rate_range: str | None = None) -> str:
+    if daily_rate_range:
+        return f"{daily_rate_range} EUR"
     return f"{daily_rate_eur} EUR" if daily_rate_eur is not None else "Unknown"
+
+
+def _duration_label(duration_months: int | None) -> str:
+    if duration_months is None:
+        return "Unknown"
+    if duration_months % 12 == 0:
+        years = duration_months // 12
+        return f"{years} year(s)"
+    return f"{duration_months} month(s)"
+
+
+def _experience_label(required_experience_years: int | None) -> str:
+    if required_experience_years is None:
+        return "Unknown"
+    return f"{required_experience_years}+ year(s)"
 
 
 def _remote_label(opportunity: Opportunity) -> str:

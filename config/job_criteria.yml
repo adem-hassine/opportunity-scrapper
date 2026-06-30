@@ -1,18 +1,24 @@
 platform_targets:
   - free-work
-  - malt
-  - lehibou
-
-minimum_tjm: 650
-remote_required: true
+employment_type:
+  - freelance
+  - cdi
+publication_date: 20/06/2026
+freelance_criteria:
+  minimum_tjm: 650
+  unspecified_tjm: true
+  minimum_duration_months: 6
+cdd_cdi_criteria:
+  minimum_year_salary: 90000
+allowed_remote_modes:
+  - hybrid
+  - full remote
 excluded_keywords:
   - wordpress
   - php
   - onsite only
 required_keywords:
+  - keycloak iam
   - java
-  - spring
-  - sso
-  - keycloak
-auto_reject_score_below: 45
-alert_score_from: 60
+#auto_reject_score_below: 10
+#alert_score_from: 25

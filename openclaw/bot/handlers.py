@@ -295,7 +295,7 @@ async def _submit(
 
     submitter = FreeWorkSubmitter(
         user_data_dir=settings.playwright_storage_dir + "/freework",
-        headless=True,
+        headless=False,
     )
     return await submitter.submit_application(mission_url, proposal_text, resume_file)
 
@@ -364,6 +364,8 @@ def _record_to_opportunity(rec: OpportunityRecord) -> Opportunity:
         client=p.get("client"),
         location=p.get("location"),
         daily_rate_eur=p.get("daily_rate_eur"),
+        duration_months=p.get("duration_months"),
+        required_experience_years=p.get("required_experience_years"),
         remote_mode=RemoteMode(p.get("remote_mode", "hybrid")),
         summary=rec.summary,
         keywords=tuple(p.get("keywords", [])),

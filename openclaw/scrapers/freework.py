@@ -35,7 +35,7 @@ else:
 FREEWORK_BASE_URL = "https://www.free-work.com"
 FREEWORK_SEARCH_LOCATION = "fr~~~"
 DEFAULT_SEARCH_URL = (
-    f"{FREEWORK_BASE_URL}/fr/tech-it/jobs?locations={FREEWORK_SEARCH_LOCATION}&query=java"
+    f"{FREEWORK_BASE_URL}/fr/tech-it/jobs?locations={FREEWORK_SEARCH_LOCATION}&query=java&sort=date"
 )
 MISSION_LINK_SELECTOR = "h2 a[href*='/job-mission/']"
 
@@ -142,6 +142,7 @@ class FreeWorkScraper(OpportunityScraper):
             RemoteMode.REMOTE,
             RemoteMode.HYBRID,
         ),
+        publication_date: date | None = None,
     ) -> None:
         self.search_url = search_url
         self.user_data_dir = Path(user_data_dir)
@@ -154,6 +155,7 @@ class FreeWorkScraper(OpportunityScraper):
         self.minimum_duration_months = minimum_duration_months
         self.minimum_year_salary = minimum_year_salary
         self.allowed_remote_modes = _normalize_allowed_remote_modes(allowed_remote_modes)
+        self.publication_date = publication_date
 
     async def fetch_new_opportunities(self) -> list[Opportunity]:
         records = await self.fetch_new_opportunity_records()
@@ -184,7 +186,11 @@ class FreeWorkScraper(OpportunityScraper):
             try:
                 list_page = await context.new_page()
                 card_experience_map: dict[str, int | None] = {}
-                urls = await self._discover_mission_urls(list_page, card_experience_map=card_experience_map)
+                urls = await self._discover_mission_urls(
+                    list_page,
+                    card_experience_map=card_experience_map,
+                    publication_date=self.publication_date,
+                )
                 if not urls:
                     return []
 
@@ -194,6 +200,10 @@ class FreeWorkScraper(OpportunityScraper):
                 for url in urls:
                     opportunity = await self._scrape_mission_detail(detail_page, url, card_experience_map=card_experience_map)
                     if opportunity.remote_mode not in self.allowed_remote_modes:
+                        continue
+                    if self.publication_date is not None and (
+                        opportunity.published_at is None or opportunity.published_at < self.publication_date
+                    ):
                         continue
                     records.append(ScrapedOpportunityRecord(url=url, opportunity=opportunity))
                 return records
@@ -205,6 +215,7 @@ class FreeWorkScraper(OpportunityScraper):
         page: Page,
         *,
         card_experience_map: dict[str, int | None] | None = None,
+        publication_date: date | None = None,
     ) -> list[str]:
         await page.goto(self.search_url, wait_until="domcontentloaded")
         if _is_blank_page_url(page.url):
@@ -221,7 +232,10 @@ class FreeWorkScraper(OpportunityScraper):
 
         urls: list[str] = []
         seen: set[str] = set()
-        await self._collect_mission_urls(page, urls=urls, seen=seen, card_experience_map=card_experience_map)
+        if await self._collect_mission_urls(
+            page, urls=urls, seen=seen, card_experience_map=card_experience_map, publication_date=publication_date
+        ):
+            return urls
 
         page_count = await _extract_last_pagination_page(page)
         page_url = page.url
@@ -229,7 +243,10 @@ class FreeWorkScraper(OpportunityScraper):
             await page.goto(_url_with_page(page_url, page_number), wait_until="domcontentloaded")
             if not await self._wait_for_mission_links(page):
                 continue
-            await self._collect_mission_urls(page, urls=urls, seen=seen, card_experience_map=card_experience_map)
+            if await self._collect_mission_urls(
+                page, urls=urls, seen=seen, card_experience_map=card_experience_map, publication_date=publication_date
+            ):
+                break
 
         if not urls:
             if await _page_indicates_no_results(page):
@@ -258,15 +275,24 @@ class FreeWorkScraper(OpportunityScraper):
         urls: list[str],
         seen: set[str],
         card_experience_map: dict[str, int | None] | None = None,
-    ) -> None:
+        publication_date: date | None = None,
+    ) -> bool:
         link_locator = page.locator(MISSION_LINK_SELECTOR)
         link_count = await link_locator.count()
 
         for index in range(link_count):
             link = link_locator.nth(index)
             card = await _card_for_mission_link(link)
-            if not await _card_matches_listing_criteria(
-                card,
+
+            card_text = await card.inner_text()
+
+            if publication_date is not None:
+                card_date = _extract_card_published_date(card_text)
+                if card_date is not None and card_date < publication_date:
+                    return True  # stop paginating — all remaining cards are older
+
+            if not _card_text_matches_listing_criteria(
+                card_text,
                 employment_types=self.employment_types,
                 minimum_tjm=self.minimum_tjm,
                 unspecified_tjm=self.unspecified_tjm,
@@ -288,8 +314,9 @@ class FreeWorkScraper(OpportunityScraper):
             urls.append(url)
 
             if card_experience_map is not None:
-                card_text = await card.inner_text()
                 card_experience_map[url] = _extract_card_required_experience_years(card_text)
+
+        return False
 
     async def _scrape_mission_detail(
         self,
@@ -315,6 +342,15 @@ class FreeWorkScraper(OpportunityScraper):
         if remote_mode == RemoteMode.REMOTE and remote_days is None:
             remote_days = 5
 
+        # Try DOM-based extraction first, fall back to text-based
+        duration_months = await _extract_detail_duration_months(page)
+        if duration_months is None:
+            duration_months = _extract_duration_months(raw_text)
+
+        keywords = await _extract_detail_stack_keywords(page)
+        if keywords is None:
+            keywords = _extract_keywords(normalized_text)
+
         # Try to extract experience from detail page first, fall back to card value
         required_experience_years = _extract_required_experience_years(raw_text)
         if required_experience_years is None and card_experience_map is not None:
@@ -328,12 +364,13 @@ class FreeWorkScraper(OpportunityScraper):
             client=client,
             location=location,
             daily_rate_eur=_extract_daily_rate(raw_text),
-            duration_months=_extract_duration_months(raw_text),
+            daily_rate_range=_extract_daily_rate_range(raw_text),
+            duration_months=duration_months,
             required_experience_years=required_experience_years,
             remote_mode=remote_mode,
             remote_days_per_week=remote_days,
             summary=_extract_summary(lines, title),
-            keywords=_extract_keywords(normalized_text),
+            keywords=keywords,
             industry=_extract_industry(normalized_text),
             source_url=url,
         )
@@ -501,7 +538,7 @@ def _extract_card_daily_rate(text: str) -> int | None:
     )
     if not match:
         return None
-    return int(match.group(1))
+    return int(match.group(2) if match.group(2) else match.group(1))
 
 
 def _extract_card_annual_salary(text: str) -> int | None:
@@ -526,6 +563,16 @@ def _extract_card_duration_months(text: str) -> int | None:
         return int(year_match.group(1)) * 12
 
     return None
+
+
+def _extract_card_published_date(text: str) -> date | None:
+    match = re.search(r"\b(\d{2})/(\d{2})/(\d{4})\b", text)
+    if not match:
+        return None
+    try:
+        return date(int(match.group(3)), int(match.group(2)), int(match.group(1)))
+    except ValueError:
+        return None
 
 
 def _extract_card_required_experience_years(text: str) -> int | None:
@@ -568,8 +615,74 @@ def _extract_card_required_experience_years(text: str) -> int | None:
     return None
 
 
+CLOCK_SVG_PATH = (
+    "M464 256A208 208 0 1 1 48 256a208 208 0 1 1 416 0z"
+    "M0 256a256 256 0 1 0 512 0A256 256 0 1 0 0 256z"
+    "M232 120V256c0 8 4 15.5 10.7 20l96 64c11 7.4 25.9 4.4 33.3-6.7s4.4-25.9-6.7-33.3L280 243.2V120c0-13.3-10.7-24-24-24s-24 10.7-24 24z"
+)
+
+
+async def _extract_detail_duration_months(page: Page) -> int | None:
+    try:
+        clock_svg = page.locator(f'svg:has(path[d="{CLOCK_SVG_PATH}"])').first
+        if await clock_svg.count() == 0:
+            return None
+        span = clock_svg.locator("xpath=following-sibling::span").first
+        if await span.count() == 0:
+            return None
+        text = await span.text_content()
+        if text is None:
+            return None
+        return _parse_duration_text(text.strip())
+    except Exception:
+        return None
+
+
+def _parse_duration_text(text: str) -> int | None:
+    normalized = _normalize_card_pay_text(text)
+    month_match = re.search(r"\b(\d{1,2})\s*mois\b", normalized)
+    if month_match:
+        return int(month_match.group(1))
+    year_match = re.search(r"\b(\d{1,2})\s*ans?\b", normalized)
+    if year_match:
+        return int(year_match.group(1)) * 12
+    return None
+
+
 def _extract_duration_months(text: str) -> int | None:
     return _extract_card_duration_months(text)
+
+
+STACK_CONTAINER_XPATH = (
+    '//*[@id="content"]/div/div/div/div/div/div[1]/header/div/div/div[1]/div[1]/div/div[2]'
+)
+
+
+async def _extract_detail_stack_keywords(page: Page) -> tuple[str, ...] | None:
+    try:
+        container = page.locator(STACK_CONTAINER_XPATH).first
+        if await container.count() == 0:
+            return None
+        tag_links = container.locator("a.tag")
+        link_count = await tag_links.count()
+        if link_count == 0:
+            return None
+        keywords: list[str] = []
+        seen: set[str] = set()
+        for index in range(link_count):
+            text = await tag_links.nth(index).text_content()
+            if text is None:
+                continue
+            keyword = text.strip()
+            if not keyword:
+                continue
+            label = keyword.lower()
+            if label not in seen:
+                seen.add(label)
+                keywords.append(label)
+        return tuple(keywords[:12])
+    except Exception:
+        return None
 
 
 def _extract_required_experience_years(text: str) -> int | None:
@@ -697,7 +810,7 @@ def _extract_daily_rate(text: str) -> int | None:
         text.lower(),
     )
     if range_match:
-        return int(range_match.group(1))
+        return int(range_match.group(2))
 
     single_match = re.search(
         r"(\d{2,4})\s*(?:\u20ac|eur)\s*(?:/|\u2044)\s*j",
@@ -706,6 +819,16 @@ def _extract_daily_rate(text: str) -> int | None:
     if single_match:
         return int(single_match.group(1))
 
+    return None
+
+
+def _extract_daily_rate_range(text: str) -> str | None:
+    range_match = re.search(
+        r"(\d{2,4})\s*(?:-|a|\u00e0|to)\s*(\d{2,4})\s*(?:\u20ac|eur)\s*(?:/|\u2044)\s*j",
+        text.lower(),
+    )
+    if range_match:
+        return f"{range_match.group(1)}-{range_match.group(2)}"
     return None
 
 
@@ -832,6 +955,7 @@ def _record_to_dict(record: ScrapedOpportunityRecord) -> dict[str, object]:
         "client": opportunity.client,
         "location": opportunity.location,
         "daily_rate_eur": opportunity.daily_rate_eur,
+        "daily_rate_range": opportunity.daily_rate_range,
         "duration_months": opportunity.duration_months,
         "required_experience_years": opportunity.required_experience_years,
         "remote_mode": opportunity.remote_mode.value,
@@ -886,6 +1010,8 @@ def _search_terms_to_url(terms: list[str]) -> str:
     query_items = [
         ("locations", FREEWORK_SEARCH_LOCATION),
         ("query", " ".join(terms)),
+        ("sort", "date"),
+
     ]
     return f"{FREEWORK_BASE_URL}/fr/tech-it/jobs?{urlencode(query_items, quote_via=quote)}"
 

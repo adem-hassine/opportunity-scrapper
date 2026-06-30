@@ -32,6 +32,8 @@ def upsert_opportunity(
         "client": opportunity.client,
         "location": opportunity.location,
         "daily_rate_eur": opportunity.daily_rate_eur,
+        "duration_months": opportunity.duration_months,
+        "required_experience_years": opportunity.required_experience_years,
         "remote_mode": opportunity.remote_mode.value,
         "keywords": list(opportunity.keywords),
         "industry": opportunity.industry,

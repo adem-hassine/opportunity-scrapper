@@ -3,13 +3,14 @@ import unittest
 from openclaw.models.domain import Opportunity, RemoteMode
 from openclaw.services.filtering import FilteringRules, QualificationRoute, score_opportunity
 from openclaw.services.resume_selector import select_best_resume
+from openclaw.services.telegram import build_opportunity_alert
 
 
 class QualificationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.rules = FilteringRules(
             minimum_tjm=650,
-            remote_required=True,
+            allowed_remote_modes=(RemoteMode.REMOTE, RemoteMode.HYBRID),
             excluded_keywords=("wordpress", "php", "onsite only"),
             required_keywords=("java", "spring", "sso", "keycloak"),
             auto_reject_score_below=45,
@@ -36,7 +37,7 @@ class QualificationTests(unittest.TestCase):
         self.assertEqual(result.route, QualificationRoute.ALERT)
         self.assertGreaterEqual(result.score, 75)
 
-    def test_excluded_keyword_rejects_opportunity(self) -> None:
+    def test_excluded_keyword_still_alerts_during_temporary_pass_through(self) -> None:
         opportunity = Opportunity(
             platform="malt",
             external_id="mission-2",
@@ -50,9 +51,9 @@ class QualificationTests(unittest.TestCase):
 
         result = score_opportunity(opportunity, self.rules)
 
-        self.assertTrue(result.rejected)
-        self.assertEqual(result.route, QualificationRoute.REJECT)
-        self.assertIn("Excluded keyword match", result.reasons[0])
+        self.assertFalse(result.rejected)
+        self.assertEqual(result.route, QualificationRoute.ALERT)
+        self.assertEqual(result.score, 100)
 
     def test_resume_selection_prefers_iam_resume(self) -> None:
         opportunity = Opportunity(
@@ -73,3 +74,21 @@ class QualificationTests(unittest.TestCase):
         self.assertEqual(match.key, "iam-sso")
         self.assertGreater(match.score, 0)
 
+    def test_telegram_alert_includes_duration_and_required_experience(self) -> None:
+        opportunity = Opportunity(
+            platform="free-work",
+            external_id="mission-4",
+            title="Responsable Cybersécurité",
+            daily_rate_eur=650,
+            duration_months=36,
+            required_experience_years=10,
+            remote_mode=RemoteMode.HYBRID,
+            summary="IAM Keycloak security architecture.",
+            keywords=("iam", "keycloak"),
+        )
+
+        result = score_opportunity(opportunity, self.rules)
+        message = build_opportunity_alert(opportunity, result)
+
+        self.assertIn("Duration: 3 year(s)", message)
+        self.assertIn("Required experience: 10+ year(s)", message)

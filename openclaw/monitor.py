@@ -6,7 +6,11 @@ import logging
 from sqlalchemy import select
 
 from openclaw.core.config import Settings, get_settings
-from openclaw.db.repository import get_opportunity_by_external_id, upsert_opportunity
+from openclaw.db.repository import (
+    get_opportunity_by_external_id,
+    update_opportunity_status,
+    upsert_opportunity,
+)
 from openclaw.db.session import get_session
 from openclaw.models.storage import OpportunityRecord
 from openclaw.scrapers.freework import ScrapedOpportunityRecord
@@ -69,19 +73,22 @@ async def _process_record(
         if existing is not None and existing.status != "new":
             return  # already acted on — don't reset or re-alert
         db_record = upsert_opportunity(session, opp, packet.filtering_result)
-        is_new = existing is None
+        should_send_alert = db_record.status == "new"
         db_id = db_record.id
 
-    if is_new and packet.filtering_result.route == QualificationRoute.ALERT:
+    if should_send_alert and packet.filtering_result.route == QualificationRoute.ALERT:
         packet.telegram_buttons = default_decision_buttons(str(db_id))
-        await _send_alert(settings, db_id, opp.platform, opp.external_id, packet)
+        alert_sent = await _send_alert(settings, db_id, opp.platform, opp.external_id, packet)
+        if alert_sent:
+            with get_session() as session:
+                update_opportunity_status(session, db_id, "alerted")
     else:
         logger.debug(
             "Skipped alert: [%s] %s route=%s is_new=%s",
             opp.platform,
             opp.external_id,
             packet.filtering_result.route.value,
-            is_new,
+            existing is None,
         )
 
 
@@ -91,7 +98,7 @@ async def _send_alert(
     platform: str,
     external_id: str,
     packet: QualificationPacket,
-) -> None:
+) -> bool:
     try:
         with get_session() as session:
             rec = session.scalars(
@@ -106,8 +113,10 @@ async def _send_alert(
             external_id,
             packet.filtering_result.score,
         )
+        return True
     except Exception:
         logger.exception("Failed to send Telegram alert for %s/%s", platform, external_id)
+        return False
 
 
 def main() -> None:

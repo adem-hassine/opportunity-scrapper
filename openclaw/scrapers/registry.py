@@ -10,7 +10,20 @@ def get_scrapers(platform: str, settings: Settings) -> list[OpportunityScraper]:
     """Return configured scraper instances for the given platform."""
     if platform == "free-work":
         search_urls = _build_search_urls(required_keywords=settings.required_keywords)
-        return [FreeWorkScraper(search_url=url) for url in search_urls]
+        return [
+            FreeWorkScraper(
+                search_url=url,
+                headless=False,
+                employment_types=settings.employment_type,
+                minimum_tjm=settings.minimum_tjm,
+                unspecified_tjm=settings.unspecified_tjm,
+                minimum_duration_months=settings.minimum_duration_months,
+                minimum_year_salary=settings.minimum_year_salary,
+                allowed_remote_modes=settings.allowed_remote_modes,
+                publication_date=settings.publication_date,
+            )
+            for url in search_urls
+        ]
     if platform == "lehibou":
         # LeHibou uses Cloudflare Turnstile — headless mode is blocked.
         # The cf_clearance cookie (saved by `make lehibou-setup`) is only valid

@@ -20,6 +20,9 @@ class Opportunity:
     client: str | None = None
     location: str | None = None
     daily_rate_eur: int | None = None
+    daily_rate_range: str | None = None
+    duration_months: int | None = None
+    required_experience_years: int | None = None
     remote_mode: RemoteMode = RemoteMode.HYBRID
     remote_days_per_week: int | None = None
     summary: str = ""
