@@ -183,7 +183,8 @@ class FreeWorkScraper(OpportunityScraper):
 
             try:
                 list_page = await context.new_page()
-                urls = await self._discover_mission_urls(list_page)
+                card_experience_map: dict[str, int | None] = {}
+                urls = await self._discover_mission_urls(list_page, card_experience_map=card_experience_map)
                 if not urls:
                     return []
 
@@ -191,7 +192,7 @@ class FreeWorkScraper(OpportunityScraper):
 
                 records: list[ScrapedOpportunityRecord] = []
                 for url in urls:
-                    opportunity = await self._scrape_mission_detail(detail_page, url)
+                    opportunity = await self._scrape_mission_detail(detail_page, url, card_experience_map=card_experience_map)
                     if opportunity.remote_mode not in self.allowed_remote_modes:
                         continue
                     records.append(ScrapedOpportunityRecord(url=url, opportunity=opportunity))
@@ -199,7 +200,12 @@ class FreeWorkScraper(OpportunityScraper):
             finally:
                 await context.close()
 
-    async def _discover_mission_urls(self, page: Page) -> list[str]:
+    async def _discover_mission_urls(
+        self,
+        page: Page,
+        *,
+        card_experience_map: dict[str, int | None] | None = None,
+    ) -> list[str]:
         await page.goto(self.search_url, wait_until="domcontentloaded")
         if _is_blank_page_url(page.url):
             return []
@@ -215,7 +221,7 @@ class FreeWorkScraper(OpportunityScraper):
 
         urls: list[str] = []
         seen: set[str] = set()
-        await self._collect_mission_urls(page, urls=urls, seen=seen)
+        await self._collect_mission_urls(page, urls=urls, seen=seen, card_experience_map=card_experience_map)
 
         page_count = await _extract_last_pagination_page(page)
         page_url = page.url
@@ -223,7 +229,7 @@ class FreeWorkScraper(OpportunityScraper):
             await page.goto(_url_with_page(page_url, page_number), wait_until="domcontentloaded")
             if not await self._wait_for_mission_links(page):
                 continue
-            await self._collect_mission_urls(page, urls=urls, seen=seen)
+            await self._collect_mission_urls(page, urls=urls, seen=seen, card_experience_map=card_experience_map)
 
         if not urls:
             if await _page_indicates_no_results(page):
@@ -251,6 +257,7 @@ class FreeWorkScraper(OpportunityScraper):
         *,
         urls: list[str],
         seen: set[str],
+        card_experience_map: dict[str, int | None] | None = None,
     ) -> None:
         link_locator = page.locator(MISSION_LINK_SELECTOR)
         link_count = await link_locator.count()
@@ -280,7 +287,17 @@ class FreeWorkScraper(OpportunityScraper):
             seen.add(url)
             urls.append(url)
 
-    async def _scrape_mission_detail(self, page: Page, url: str) -> Opportunity:
+            if card_experience_map is not None:
+                card_text = await card.inner_text()
+                card_experience_map[url] = _extract_card_required_experience_years(card_text)
+
+    async def _scrape_mission_detail(
+        self,
+        page: Page,
+        url: str,
+        *,
+        card_experience_map: dict[str, int | None] | None = None,
+    ) -> Opportunity:
         await page.goto(url, wait_until="domcontentloaded")
         await _dismiss_cookie_banner(page)
         await page.locator("h1").first.wait_for(state="visible", timeout=10_000)
@@ -298,6 +315,11 @@ class FreeWorkScraper(OpportunityScraper):
         if remote_mode == RemoteMode.REMOTE and remote_days is None:
             remote_days = 5
 
+        # Try to extract experience from detail page first, fall back to card value
+        required_experience_years = _extract_required_experience_years(raw_text)
+        if required_experience_years is None and card_experience_map is not None:
+            required_experience_years = card_experience_map.get(url)
+
         return Opportunity(
             platform=self.platform,
             external_id=_extract_external_id(url, normalized_text),
@@ -307,7 +329,7 @@ class FreeWorkScraper(OpportunityScraper):
             location=location,
             daily_rate_eur=_extract_daily_rate(raw_text),
             duration_months=_extract_duration_months(raw_text),
-            required_experience_years=_extract_required_experience_years(raw_text),
+            required_experience_years=required_experience_years,
             remote_mode=remote_mode,
             remote_days_per_week=remote_days,
             summary=_extract_summary(lines, title),
@@ -502,6 +524,46 @@ def _extract_card_duration_months(text: str) -> int | None:
     year_match = re.search(r"\b(\d{1,2})\s*ans?\b", normalized)
     if year_match:
         return int(year_match.group(1)) * 12
+
+    return None
+
+
+def _extract_card_required_experience_years(text: str) -> int | None:
+    """Extract required experience years from a listing card's inner text."""
+    raw_normalized = _normalize_card_pay_text(text)
+    # Pattern for "X à Y ans d'expérience" (range) – take the lower bound
+    range_match = re.search(
+        r"(\d{1,2})\s*[àa]\s*\d{1,2}\s*ans?\s*d['’]?exp[eé]rience",
+        raw_normalized,
+        re.IGNORECASE,
+    )
+    if range_match:
+        return int(range_match.group(1))
+
+    # Pattern for "X ans d'expérience" (single value)
+    single_match = re.search(
+        r"(\d{1,2})\s*ans?\s*d['’]?exp[eé]rience",
+        raw_normalized,
+        re.IGNORECASE,
+    )
+    if single_match:
+        return int(single_match.group(1))
+
+    # Fallback to ASCII-normalized text for other patterns
+    normalized = _normalize_text(raw_normalized)
+    match = re.search(
+        r"(?:>|>=|plus de|minimum|min\.?|au moins)?\s*(\d{1,2})\s*ans?.{0,8}experience",
+        normalized,
+    )
+    if match:
+        return int(match.group(1))
+
+    match = re.search(
+        r"experience\s*:?\s*(?:>|>=|plus de|minimum|min\.?|au moins)?\s*(\d{1,2})\s*ans?",
+        normalized,
+    )
+    if match:
+        return int(match.group(1))
 
     return None
 
