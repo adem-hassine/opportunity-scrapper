@@ -511,7 +511,29 @@ def _extract_duration_months(text: str) -> int | None:
 
 
 def _extract_required_experience_years(text: str) -> int | None:
-    normalized = _normalize_text(_normalize_card_pay_text(text))
+    # Try to match on the raw text first (before ASCII normalization)
+    # to preserve accented characters and the "à" range separator.
+    raw_normalized = _normalize_card_pay_text(text)
+    # Pattern for "X à Y ans d'expérience" (range) – take the lower bound
+    range_match = re.search(
+        r"(\d{1,2})\s*[àa]\s*\d{1,2}\s*ans?\s*d['’]?exp[eé]rience",
+        raw_normalized,
+        re.IGNORECASE,
+    )
+    if range_match:
+        return int(range_match.group(1))
+
+    # Pattern for "X ans d'expérience" (single value)
+    single_match = re.search(
+        r"(\d{1,2})\s*ans?\s*d['’]?exp[eé]rience",
+        raw_normalized,
+        re.IGNORECASE,
+    )
+    if single_match:
+        return int(single_match.group(1))
+
+    # Fallback to ASCII-normalized text for other patterns
+    normalized = _normalize_text(raw_normalized)
     match = re.search(
         r"(?:>|>=|plus de|minimum|min\.?|au moins)?\s*(\d{1,2})\s*ans?.{0,8}experience",
         normalized,
