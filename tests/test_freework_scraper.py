@@ -87,8 +87,6 @@ class FreeWorkScraperParsingTests(unittest.TestCase):
             allowed_remote_modes=[RemoteMode.REMOTE, RemoteMode.HYBRID],
             excluded_keywords=["php"],
             required_keywords=["java", "keycloak"],
-            auto_reject_score_below=30,
-            alert_score_from=80,
         )
 
         rules = FilteringRules.from_settings(settings)
@@ -98,8 +96,6 @@ class FreeWorkScraperParsingTests(unittest.TestCase):
         self.assertEqual(rules.allowed_remote_modes, (RemoteMode.REMOTE, RemoteMode.HYBRID))
         self.assertEqual(rules.excluded_keywords, ("php",))
         self.assertEqual(rules.required_keywords, ("java", "keycloak"))
-        self.assertEqual(rules.auto_reject_score_below, 30)
-        self.assertEqual(rules.alert_score_from, 80)
 
     def test_keyword_to_search_url_slugifies_terms(self) -> None:
         self.assertEqual(

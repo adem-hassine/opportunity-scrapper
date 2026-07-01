@@ -16,7 +16,7 @@ from openclaw.models.storage import OpportunityRecord, ProposalDraftRecord, Subm
 from openclaw.scrapers.freework_submitter import FreeWorkSubmitter
 from openclaw.services.filtering import FilteringRules
 from openclaw.services.proposal_generator import generate_proposal
-from openclaw.services.resume_selector import DEFAULT_RESUME_VARIANTS
+from openclaw.services.resume_selector import load_resume_variants
 from openclaw.services.telegram import (
     TelegramAction,
     build_preview_message,
@@ -99,7 +99,8 @@ async def _handle_quick_apply(query, opportunity_id: int) -> None:
         return
 
     rules = FilteringRules.from_settings(settings)
-    packet = qualify_opportunity(opp, rules=rules)
+    resumes = load_resume_variants(settings.resume_dir)
+    packet = qualify_opportunity(opp, rules=rules, resumes=resumes)
 
     loop = asyncio.get_running_loop()
     draft_text = await loop.run_in_executor(
@@ -144,7 +145,8 @@ async def _handle_review(query, opportunity_id: int) -> None:
         opp = _record_to_opportunity(rec)
 
     rules = FilteringRules.from_settings(settings)
-    packet = qualify_opportunity(opp, rules=rules)
+    resumes = load_resume_variants(settings.resume_dir)
+    packet = qualify_opportunity(opp, rules=rules, resumes=resumes)
 
     loop = asyncio.get_running_loop()
     draft_text = await loop.run_in_executor(
@@ -236,7 +238,8 @@ async def _handle_regenerate(query, opportunity_id: int) -> None:
         opp = _record_to_opportunity(rec)
 
     rules = FilteringRules.from_settings(settings)
-    packet = qualify_opportunity(opp, rules=rules)
+    resumes = load_resume_variants(settings.resume_dir)
+    packet = qualify_opportunity(opp, rules=rules, resumes=resumes)
 
     loop = asyncio.get_running_loop()
     draft_text = await loop.run_in_executor(
@@ -348,7 +351,8 @@ async def _persist_submission(
 def _resolve_resume_file(resume_key: str | None) -> str | None:
     if resume_key is None:
         return None
-    for variant in DEFAULT_RESUME_VARIANTS:
+    settings = get_settings()
+    for variant in load_resume_variants(settings.resume_dir):
         if variant.key == resume_key:
             return variant.file_path
     return None

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+from pathlib import Path
 
 from openclaw.models.domain import Opportunity, ResumeVariant
 
@@ -14,58 +16,70 @@ class ResumeMatch:
     rationale: str
 
 
-DEFAULT_RESUME_VARIANTS: tuple[ResumeVariant, ...] = (
-    ResumeVariant(
-        key="java-backend",
-        label="Java Backend",
-        summary="Generic Java/Spring backend consulting profile.",
-        primary_keywords=("java", "spring", "spring boot", "rest", "microservices"),
-        industries=("banking", "finance", "retail"),
-        preferred_tone="consultative",
-        file_path="data/resumes/java-backend.pdf",
-    ),
-    ResumeVariant(
-        key="iam-sso",
-        label="IAM / SSO Expert",
-        summary="Identity, federation, and access management profile.",
-        primary_keywords=("keycloak", "oauth2", "sso", "saml", "auth0", "okta"),
-        industries=("banking", "insurance", "security"),
-        preferred_tone="enterprise",
-        file_path="data/resumes/iam-sso.pdf",
-    ),
-    ResumeVariant(
-        key="enterprise-architect",
-        label="Enterprise Architect",
-        summary="Enterprise modernization and architecture profile.",
-        primary_keywords=("architecture", "governance", "transformation", "integration"),
-        industries=("banking", "public", "enterprise"),
-        preferred_tone="enterprise",
-        file_path="data/resumes/enterprise-architect.pdf",
-    ),
-    ResumeVariant(
-        key="api-security",
-        label="API Security",
-        summary="API and application security consulting profile.",
-        primary_keywords=("security", "api", "gateway", "oauth2", "zero trust"),
-        industries=("banking", "security", "healthcare"),
-        preferred_tone="enterprise",
-        file_path="data/resumes/api-security.pdf",
-    ),
-    ResumeVariant(
-        key="cloud-migration",
-        label="Cloud Migration",
-        summary="Cloud modernization and Kubernetes migration profile.",
-        primary_keywords=("aws", "azure", "gcp", "kubernetes", "migration", "modernization"),
-        industries=("banking", "saas", "enterprise"),
-        preferred_tone="consultative",
-        file_path="data/resumes/cloud-migration.pdf",
-    ),
-)
+_RESUME_LANG_DIRS = ("en", "fr")
+
+_ROLE_KEYWORD_MAP: dict[str, tuple[str, ...]] = {
+    "java": ("java", "spring", "spring boot", "j2ee", "jakarta"),
+    "technical lead": ("java", "spring", "spring boot", "lead", "architecture", "rest", "microservices"),
+    "sso": ("sso", "keycloak", "oauth2", "saml", "auth0", "okta", "iam"),
+    "iam": ("sso", "keycloak", "oauth2", "saml", "auth0", "okta", "iam"),
+    "full stack": ("java", "spring", "react", "angular", "typescript", "rest"),
+}
+
+
+def _slugify(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+
+
+def _parse_resume_filename(stem: str) -> tuple[str, str, str] | None:
+    """Parse a resume filename stem into (name, lang, role).
+
+    Expected pattern: <name> - <EN|FR> - <role>
+    """
+    m = re.match(r"^(.+?)\s*-\s*(EN|FR)\s*-\s*(.+)$", stem, re.IGNORECASE)
+    if not m:
+        return None
+    return m.group(1).strip(), m.group(2).upper(), m.group(3).strip()
+
+
+def load_resume_variants(resume_dir: str | Path) -> tuple[ResumeVariant, ...]:
+    resume_path = Path(resume_dir)
+    variants: list[ResumeVariant] = []
+
+    for lang_dir in _RESUME_LANG_DIRS:
+        lang_path = resume_path / lang_dir
+        if not lang_path.is_dir():
+            continue
+        for pdf_path in sorted(lang_path.glob("*.pdf")):
+            parsed = _parse_resume_filename(pdf_path.stem)
+            if parsed is None:
+                continue
+            _name, lang, role = parsed
+            label = f"{role} ({lang})"
+            key = _slugify(f"{role}-{lang}")
+
+            keywords: set[str] = set()
+            for word in re.split(r"[\s&/]+", role.lower()):
+                mapped = _ROLE_KEYWORD_MAP.get(word)
+                if mapped:
+                    keywords.update(mapped)
+            if not keywords:
+                keywords.add(role.lower())
+
+            variants.append(ResumeVariant(
+                key=key,
+                label=label,
+                summary=f"{role} resume ({lang}).",
+                primary_keywords=tuple(sorted(keywords)),
+                file_path=str(pdf_path),
+            ))
+
+    return tuple(variants)
 
 
 def select_best_resume(
     opportunity: Opportunity,
-    resumes: tuple[ResumeVariant, ...] = DEFAULT_RESUME_VARIANTS,
+    resumes: tuple[ResumeVariant, ...],
 ) -> ResumeMatch:
     text = opportunity.search_blob()
     best_match: ResumeMatch | None = None

@@ -41,7 +41,6 @@ async def root() -> dict[str, object]:
         "workflow": [
             "monitor platforms",
             "apply hard filters",
-            "score mission",
             "send Telegram alert",
             "draft proposal",
             "wait for approval",

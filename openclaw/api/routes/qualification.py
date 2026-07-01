@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 from openclaw.core.config import get_settings
 from openclaw.models.domain import Opportunity, RemoteMode
 from openclaw.services.filtering import FilteringRules
+from openclaw.services.resume_selector import load_resume_variants
 from openclaw.workflows.qualification import qualification_packet_to_dict, qualify_opportunity
 
 router = APIRouter(prefix="/api/v1", tags=["qualification"])
@@ -44,5 +45,6 @@ async def qualification_preview(payload: QualificationPreviewRequest) -> dict[st
         industry=payload.industry,
     )
     rules = FilteringRules.from_settings(settings)
-    packet = qualify_opportunity(opportunity, rules=rules)
+    resumes = load_resume_variants(settings.resume_dir)
+    packet = qualify_opportunity(opportunity, rules=rules, resumes=resumes)
     return qualification_packet_to_dict(packet)

@@ -16,6 +16,7 @@ from openclaw.models.storage import OpportunityRecord
 from openclaw.scrapers.freework import ScrapedOpportunityRecord
 from openclaw.scrapers.registry import get_scrapers
 from openclaw.services.filtering import FilteringRules, QualificationRoute
+from openclaw.services.resume_selector import load_resume_variants
 from openclaw.services.telegram import default_decision_buttons
 from openclaw.workflows.qualification import QualificationPacket, qualify_opportunity
 
@@ -66,7 +67,8 @@ async def _process_record(
     rules: FilteringRules,
 ) -> None:
     opp = record.opportunity
-    packet = qualify_opportunity(opp, rules=rules)
+    resumes = load_resume_variants(settings.resume_dir)
+    packet = qualify_opportunity(opp, rules=rules, resumes=resumes)
 
     with get_session() as session:
         existing = get_opportunity_by_external_id(session, opp.platform, opp.external_id)
@@ -108,10 +110,9 @@ async def _send_alert(
             from openclaw.bot.sender import _send  # noqa: PLC0415
             await _send(settings, rec, packet)
         logger.info(
-            "Alert sent: [%s] %s (score=%d)",
+            "Alert sent: [%s] %s",
             platform,
             external_id,
-            packet.filtering_result.score,
         )
         return True
     except Exception:

@@ -36,8 +36,6 @@ class ConfigTests(unittest.TestCase):
                         "required_keywords:",
                         "  - java",
                         "  - spring",
-                        "auto_reject_score_below: 50",
-                        "alert_score_from: 80",
                     ]
                 ),
                 encoding="utf-8",
@@ -59,8 +57,6 @@ class ConfigTests(unittest.TestCase):
             )
             self.assertEqual(criteria.excluded_keywords, ["php"])
             self.assertEqual(criteria.required_keywords, ["java", "spring"])
-            self.assertEqual(criteria.auto_reject_score_below, 50)
-            self.assertEqual(criteria.alert_score_from, 80)
 
     def test_settings_reads_job_criteria_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -80,8 +76,6 @@ class ConfigTests(unittest.TestCase):
                         "  - wordpress",
                         "required_keywords:",
                         "  - keycloak",
-                        "auto_reject_score_below: 40",
-                        "alert_score_from: 70",
                     ]
                 ),
                 encoding="utf-8",
@@ -97,8 +91,6 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(settings.minimum_year_salary, 100000)
             self.assertEqual(settings.allowed_remote_modes, [RemoteMode.ONSITE])
             self.assertEqual(settings.required_keywords, ["keycloak"])
-            self.assertEqual(settings.auto_reject_score_below, 40)
-            self.assertEqual(settings.alert_score_from, 70)
 
     def test_simple_yaml_parser_supports_comments_and_lists(self) -> None:
         parsed = _load_simple_yaml_mapping(

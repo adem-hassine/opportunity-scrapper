@@ -19,6 +19,5 @@ excluded_keywords:
   - onsite only
 required_keywords:
   - keycloak iam
-  - java
 #auto_reject_score_below: 10
 #alert_score_from: 25

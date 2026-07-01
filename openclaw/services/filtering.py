@@ -20,8 +20,6 @@ class FilteringRules:
     allowed_remote_modes: tuple[RemoteMode, ...] = (RemoteMode.REMOTE, RemoteMode.HYBRID)
     excluded_keywords: tuple[str, ...] = ("wordpress", "php", "onsite only")
     required_keywords: tuple[str, ...] = ("java", "spring", "sso", "keycloak")
-    auto_reject_score_below: int = 45
-    alert_score_from: int = 75
     paris_aliases: tuple[str, ...] = ("paris", "ile-de-france", "idf")
 
     @classmethod
@@ -32,8 +30,6 @@ class FilteringRules:
             allowed_remote_modes=tuple(settings.allowed_remote_modes),
             excluded_keywords=tuple(settings.excluded_keywords),
             required_keywords=tuple(settings.required_keywords),
-            auto_reject_score_below=settings.auto_reject_score_below,
-            alert_score_from=settings.alert_score_from,
         )
 
 
@@ -43,13 +39,10 @@ class FilteringSettings(Protocol):
     allowed_remote_modes: list[RemoteMode]
     excluded_keywords: list[str]
     required_keywords: list[str]
-    auto_reject_score_below: int
-    alert_score_from: int
 
 
 @dataclass(slots=True)
 class FilteringResult:
-    score: int
     route: QualificationRoute
     rejected: bool
     reasons: list[str] = field(default_factory=list)
@@ -64,12 +57,11 @@ def score_opportunity(opportunity: Opportunity, rules: FilteringRules) -> Filter
     )
 
     return FilteringResult(
-        score=100,
         route=QualificationRoute.ALERT,
         rejected=False,
         reasons=["Temporary pass-through: send every scraped opportunity to Telegram."],
         matched_keywords=matched_required,
-        matched_signals={"temporary_always_alert": 100},
+        matched_signals={"temporary_always_alert": 1},
     )
 
 

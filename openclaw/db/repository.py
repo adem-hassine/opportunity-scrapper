@@ -16,7 +16,7 @@ def upsert_opportunity(
     """Insert or update an opportunity by (platform, external_id).
 
     On INSERT: status is set to "new".
-    On UPDATE: status is NOT changed; score and payload are refreshed.
+    On UPDATE: status is NOT changed; payload is refreshed.
     """
     stmt = select(OpportunityRecord).where(
         OpportunityRecord.platform == opportunity.platform,
@@ -54,7 +54,6 @@ def upsert_opportunity(
             location=opportunity.location,
             remote_mode=opportunity.remote_mode.value,
             industry=opportunity.industry,
-            score=filtering_result.score,
             summary=opportunity.summary,
             payload=payload,
         )
@@ -65,7 +64,6 @@ def upsert_opportunity(
         record.location = opportunity.location
         record.remote_mode = opportunity.remote_mode.value
         record.industry = opportunity.industry
-        record.score = filtering_result.score
         record.summary = opportunity.summary
         record.payload = payload
 

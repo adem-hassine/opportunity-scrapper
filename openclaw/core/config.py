@@ -37,8 +37,6 @@ class JobCriteria(BaseModel):
     required_keywords: list[str] = Field(
         default_factory=lambda: ["java", "spring", "sso", "keycloak"]
     )
-    auto_reject_score_below: int = 45
-    alert_score_from: int = 75
     publication_date: str | None = None
 
     @field_validator(
@@ -294,14 +292,6 @@ class Settings(BaseSettings):
     @property
     def required_keywords(self) -> list[str]:
         return list(self.job_criteria.required_keywords)
-
-    @property
-    def auto_reject_score_below(self) -> int:
-        return self.job_criteria.auto_reject_score_below
-
-    @property
-    def alert_score_from(self) -> int:
-        return self.job_criteria.alert_score_from
 
     @property
     def publication_date(self) -> date | None:

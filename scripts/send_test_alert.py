@@ -10,6 +10,7 @@ from openclaw.db.session import get_session
 from openclaw.models.domain import Opportunity, RemoteMode
 from openclaw.models.storage import OpportunityRecord
 from openclaw.services.filtering import FilteringRules
+from openclaw.services.resume_selector import load_resume_variants
 from openclaw.workflows.qualification import qualify_opportunity
 
 opportunity_id = int(sys.argv[1]) if len(sys.argv) > 1 else 17
@@ -38,7 +39,8 @@ with get_session() as session:
     )
     record_id = record.id
 
-packet = qualify_opportunity(opp, rules=rules)
+resumes = load_resume_variants(settings.resume_dir)
+packet = qualify_opportunity(opp, rules=rules, resumes=resumes)
 
 with get_session() as session:
     rec = session.scalars(

@@ -8,7 +8,7 @@ from openclaw.services.filtering import FilteringResult
 from openclaw.services.resume_selector import ResumeMatch
 
 PREVIEW_SEPARATOR = "──────────────────────"
-PREVIEW_MAX_CHARS = 800
+PREVIEW_MAX_CHARS = 4000
 
 
 class TelegramAction(StrEnum):
@@ -38,6 +38,7 @@ def build_opportunity_alert(
     ]
     if opportunity.source_url:
         lines.append(f"Link: {opportunity.source_url}")
+    lines.append(f"Published: {opportunity.published_at or 'Unknown'}")
     lines.extend(
         [
             f"TJM: {_rate_label(opportunity.daily_rate_eur, opportunity.daily_rate_range)}",
@@ -54,13 +55,7 @@ def build_opportunity_alert(
         lines.extend(f"- {keyword}" for keyword in opportunity.keywords)
     else:
         lines.append("- No keyword list yet")
-    lines.extend(
-        [
-            "",
-            f"Score: {filtering_result.score}/100",
-            f"Route: {filtering_result.route.value}",
-        ]
-    )
+    lines.append("")
     if resume_match is not None:
         lines.append(f"Suggested CV: {resume_match.label}")
     if filtering_result.reasons:

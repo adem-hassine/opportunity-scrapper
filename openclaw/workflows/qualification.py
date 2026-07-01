@@ -6,7 +6,6 @@ from openclaw.models.domain import Opportunity, ResumeVariant
 from openclaw.services.filtering import FilteringResult, FilteringRules, score_opportunity
 from openclaw.services.proposal_memory import ProposalMemoryQuery, build_memory_query
 from openclaw.services.resume_selector import (
-    DEFAULT_RESUME_VARIANTS,
     ResumeMatch,
     select_best_resume,
 )
@@ -30,13 +29,13 @@ def qualify_opportunity(
     opportunity: Opportunity,
     *,
     rules: FilteringRules,
-    resumes: tuple[ResumeVariant, ...] = DEFAULT_RESUME_VARIANTS,
+    resumes: tuple[ResumeVariant, ...] | None = None,
 ) -> QualificationPacket:
     filtering_result = score_opportunity(opportunity, rules)
     resume_match: ResumeMatch | None = None
     memory_query: ProposalMemoryQuery | None = None
 
-    if not filtering_result.rejected:
+    if not filtering_result.rejected and resumes is not None:
         resume_match = select_best_resume(opportunity, resumes=resumes)
         memory_query = build_memory_query(opportunity, resume_match)
 
@@ -74,7 +73,6 @@ def qualification_packet_to_dict(packet: QualificationPacket) -> dict[str, objec
         }
 
     return {
-        "score": packet.filtering_result.score,
         "route": packet.filtering_result.route.value,
         "rejected": packet.filtering_result.rejected,
         "reasons": packet.filtering_result.reasons,

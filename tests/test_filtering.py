@@ -1,6 +1,6 @@
 import unittest
 
-from openclaw.models.domain import Opportunity, RemoteMode
+from openclaw.models.domain import Opportunity, RemoteMode, ResumeVariant
 from openclaw.services.filtering import FilteringRules, QualificationRoute, score_opportunity
 from openclaw.services.resume_selector import select_best_resume
 from openclaw.services.telegram import build_opportunity_alert
@@ -13,8 +13,6 @@ class QualificationTests(unittest.TestCase):
             allowed_remote_modes=(RemoteMode.REMOTE, RemoteMode.HYBRID),
             excluded_keywords=("wordpress", "php", "onsite only"),
             required_keywords=("java", "spring", "sso", "keycloak"),
-            auto_reject_score_below=45,
-            alert_score_from=75,
         )
 
     def test_high_quality_opportunity_goes_to_alert(self) -> None:
@@ -35,7 +33,6 @@ class QualificationTests(unittest.TestCase):
 
         self.assertFalse(result.rejected)
         self.assertEqual(result.route, QualificationRoute.ALERT)
-        self.assertGreaterEqual(result.score, 75)
 
     def test_excluded_keyword_still_alerts_during_temporary_pass_through(self) -> None:
         opportunity = Opportunity(
@@ -53,9 +50,26 @@ class QualificationTests(unittest.TestCase):
 
         self.assertFalse(result.rejected)
         self.assertEqual(result.route, QualificationRoute.ALERT)
-        self.assertEqual(result.score, 100)
 
     def test_resume_selection_prefers_iam_resume(self) -> None:
+        test_resumes = (
+            ResumeVariant(
+                key="java-backend",
+                label="Java Backend",
+                summary="Generic Java/Spring backend consulting profile.",
+                primary_keywords=("java", "spring", "spring boot", "rest", "microservices"),
+                industries=("banking", "finance", "retail"),
+                preferred_tone="consultative",
+            ),
+            ResumeVariant(
+                key="iam-sso",
+                label="IAM / SSO Expert",
+                summary="Identity, federation, and access management profile.",
+                primary_keywords=("keycloak", "oauth2", "sso", "saml", "auth0", "okta"),
+                industries=("banking", "insurance", "security"),
+                preferred_tone="enterprise",
+            ),
+        )
         opportunity = Opportunity(
             platform="lehibou",
             external_id="mission-3",
@@ -69,7 +83,7 @@ class QualificationTests(unittest.TestCase):
             industry="security",
         )
 
-        match = select_best_resume(opportunity)
+        match = select_best_resume(opportunity, test_resumes)
 
         self.assertEqual(match.key, "iam-sso")
         self.assertGreater(match.score, 0)

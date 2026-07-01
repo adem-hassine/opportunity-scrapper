@@ -39,7 +39,6 @@ class OpportunityRecord(TimestampMixin, Base):
     location: Mapped[str | None] = mapped_column(String(255))
     remote_mode: Mapped[str] = mapped_column(String(32), default="hybrid")
     industry: Mapped[str | None] = mapped_column(String(128))
-    score: Mapped[int | None] = mapped_column(Integer)
     summary: Mapped[str] = mapped_column(Text, default="")
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
 
